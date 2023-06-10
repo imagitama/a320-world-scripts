@@ -7,10 +7,13 @@ using VRC.Udon.Common.Interfaces;
 
 public class PushButton : UdonSharpBehaviour
 {
-    // [UdonSynced]
     public bool isSeqOneOn = false;
-    // [UdonSynced]
+    [UdonSynced]
+    bool syncedIsSeqOneOn = false;
+
     public bool isSeqTwoOn = false;
+    [UdonSynced]
+    bool syncedIsSeqTwoOn = false;
 
     public bool isSeqTwoTogglable = true;
     public bool isCombined = false;
@@ -22,10 +25,20 @@ public class PushButton : UdonSharpBehaviour
     Transform seqOne;
     Transform seqTwo;
     float timeToUpdateRenderer;
+    BoxCollider boxCollider;
+    bool hasFingerEnteredCollider = false;
+    float timeBeforeNextCollisionCheck = -1;
+
+    bool needsToPlayAnimation = false;
+
+    // debug
+    Transform fakeFinger;
 
     void Start() {
-        for (int i = 0; i < this.transform.childCount; i++)
-        {
+        syncedIsSeqOneOn = isSeqOneOn;
+        syncedIsSeqTwoOn = isSeqTwoOn;
+
+        for (int i = 0; i < this.transform.childCount; i++) {
             Transform child = this.transform.GetChild(i);
 
             if (child.name.Contains("SEQ1")) {
@@ -38,10 +51,85 @@ public class PushButton : UdonSharpBehaviour
 
         UpdateSeqOneRenderer();
         UpdateSeqTwoRenderer();
+        
+        boxCollider = this.gameObject.GetComponent<BoxCollider>();
+        
+        #if UNITY_EDITOR
+        fakeFinger = GameObject.Find("/FakeHand/FakeFinger").transform;
+        #endif
     }
 
     void Update() {
         CheckIfSeqTwoNeedsUpdating();
+
+        DetectFingerPress();
+        
+        UpdateVisually();
+    }
+
+    //////////////
+
+    public override void OnDeserialization() {
+        if (GetIsOwner()) {
+            return;
+        }
+
+        if (isSeqOneOn != syncedIsSeqOneOn || isSeqTwoOn != syncedIsSeqTwoOn) {
+            needsToPlayAnimation = true;
+        }
+
+        isSeqOneOn = syncedIsSeqOneOn;
+        isSeqTwoOn = syncedIsSeqTwoOn;
+    }
+
+    //////////////
+
+    bool GetIsOwner() {
+        return Networking.IsOwner(this.gameObject);
+    }
+
+    Vector3 GetIndexFingerPosition() {
+        #if UNITY_EDITOR
+        return fakeFinger.position;
+        #else
+        return Networking.LocalPlayer.GetBonePosition(HumanBodyBones.RightIndexDistal);
+        #endif
+    }
+
+    bool GetIsIndexFingerInsideCollider() {
+        Bounds colliderBounds = boxCollider.bounds;
+
+        var indexFingerPosition = GetIndexFingerPosition();
+
+        bool isInside = colliderBounds.Contains(indexFingerPosition);
+
+        return isInside;
+    }
+
+    void DetectFingerPress() {
+        // prevent edge case where boxcollider physically moves away from finger on push in so triggers another collision
+        if (timeBeforeNextCollisionCheck != -1) {
+            if (Time.time > timeBeforeNextCollisionCheck) {
+                timeBeforeNextCollisionCheck = -1;
+            }
+            return;
+        }
+
+        var isIndexFingerInsideCollider = GetIsIndexFingerInsideCollider();
+
+        if (!hasFingerEnteredCollider) {
+            if (isIndexFingerInsideCollider) {
+                hasFingerEnteredCollider = true;
+
+                OnFingerInteract();
+
+                timeBeforeNextCollisionCheck = Time.time + 0.5f; // Time.time in seconds
+            }
+        } else {
+            if (!isIndexFingerInsideCollider) {
+                hasFingerEnteredCollider = false;
+            }
+        }
     }
 
     void CheckIfSeqTwoNeedsUpdating() {
@@ -56,21 +144,25 @@ public class PushButton : UdonSharpBehaviour
         }
     }
 
-    public override void Interact() {
-        // NOTE: If 2 people interact at same time it might compete
-        SendCustomNetworkEvent(NetworkEventTarget.All, "PushTheButton");
-    }
+    void OnFingerInteract() {
+        Debug.Log("PushButton \"" + this.gameObject.name + "\" has been interacted with");
 
-    void ToggleState() {
-        if (isSeqTwoTogglable) {
-            isSeqTwoOn = !isSeqTwoOn;
-        } else {
-            isSeqOneOn = !isSeqOneOn;
-        }
-    }
+        Networking.SetOwner(Networking.LocalPlayer, this.gameObject);
 
-    public void PushTheButton() {
         ToggleState();
+
+        syncedIsSeqOneOn = isSeqOneOn;
+        syncedIsSeqTwoOn = isSeqTwoOn;
+
+        needsToPlayAnimation = true;
+    }
+
+    void UpdateVisually() {
+        if (!needsToPlayAnimation) {
+            return;
+        }
+
+        needsToPlayAnimation = false;
 
         if (isPulledOut != true) {
             PlayPushDownAnimation();
@@ -79,6 +171,14 @@ public class PushButton : UdonSharpBehaviour
         }
 
         UpdateRendererAfterDelay();
+    }
+
+    void ToggleState() {
+        if (isSeqTwoTogglable) {
+            isSeqTwoOn = !isSeqTwoOn;
+        } else {
+            isSeqOneOn = !isSeqOneOn;
+        }
     }
 
     void UpdateRendererAfterDelay() {

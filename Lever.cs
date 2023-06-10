@@ -6,11 +6,6 @@ using VRC.SDK3.Components;
 using VRC.Udon;
 using VRC.Udon.Common.Interfaces;
 
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-using UnityEditor;
-using UdonSharpEditor;
-#endif
-
 public class Lever : UdonSharpBehaviour
 {
     float visibleRotationOnAxis;
@@ -45,42 +40,24 @@ public class Lever : UdonSharpBehaviour
     public float rotationOffsetForReal;
     // gear lever
     public bool isVertical = false;
-
     bool needsToSnap = false;
 
-// #if UNITY_EDITOR && !COMPILER_UDONSHARP
-//     string GetGizmoLabel() {
+    // hand interaction
+    BoxCollider boxCollider;
+    bool hasHandEnteredCollider = false;
+    float timeBeforeNextCollisionCheck = -1;
+    Renderer renderer;
+    Material standardMaterial;
+    public Material highlightMaterial;
+    Vector3 lastKnownPickupPosition;
+    // debug
+    Transform fakeHand;
 
-//         if (isPickingUp) {
-//             if (GetNeedsSnapping()) {
-//                 return FindNearestAngleIndexForRotator() + " - " + FindNearestAngleForRotator();
-//             } else {
-//                 return "Picking";
-//             }
-//         }
-
-//         if (!GetNeedsSnapping()) {
-//             return "SnapOff";
-//         }
-        
-//         if (lastSelectedIndex == -1) {
-//             return "NoSelected";
-//         }
-
-//         return lastSelectedIndex + " - " + targetAngles[lastSelectedIndex];
-//     }
-
-//     [DrawGizmo (GizmoType.Selected | GizmoType.NonSelected)]
-//     void OnDrawGizmos() {
-//         // Handles.Label(transform.position, GetGizmoLabel());
-//     }
-// #endif
-
-    void Start()
-    {
+    public void Start() {
         rotator = this.transform.parent;
 
         initialPickupPosition = this.transform.position;
+        lastKnownPickupPosition = initialPickupPosition;
 
         handleTarget = rotator.Find("LeverTarget");
 
@@ -93,15 +70,65 @@ public class Lever : UdonSharpBehaviour
         if (!GetIsOwner()) {
             this.transform.Find("Cube").gameObject.SetActive(false);
         }
+
+        #if UNITY_EDITOR
+        fakeHand = GameObject.Find("/FakeHand").transform;
+        #endif
+
+        renderer = rotator.GetComponent<Renderer>();
+        boxCollider = rotator.GetComponent<BoxCollider>();
+        standardMaterial = renderer.material;
     }
+
+    public void Update() {
+        if (GetIsOwner()) {
+            MovePickupToHand();
+
+            if (isPickingUp) {
+                visibleRotationOnAxis = GetRotatorRotationOnAxis();
+            }
+
+            syncedVisibleRotationOnAxis = visibleRotationOnAxis;
+
+            pickupPositionOnAxis = isVertical ? this.transform.position.y : this.transform.position.z;
+            syncedPickupPositionOnAxis = pickupPositionOnAxis;
+        } else {
+            SyncPickupPosition();
+        }
+        
+        DetectHandHover();
+        
+        MoveRotatorVisibly();
+    }
+
+    //////////////
 
     public override void OnDeserialization() {
         if (GetIsOwner()) {
             return;
         }
+
         visibleRotationOnAxis = syncedVisibleRotationOnAxis;
         pickupPositionOnAxis = syncedPickupPositionOnAxis;
     }
+
+    public override void InputGrab(bool value, VRC.Udon.Common.UdonInputEventArgs args) {
+        if (value == true) {
+            Debug.Log("Player grab");
+
+            if (hasHandEnteredCollider) {
+                OnPickup();
+            }
+        } else {
+            Debug.Log("Player drop");
+
+            if (isPickingUp) {
+                OnDrop();
+            }
+        }
+    }
+
+    //////////////
 
     void SetMaxDegrees() {
         if (targetAngles.Length < 2) {
@@ -114,25 +141,6 @@ public class Lever : UdonSharpBehaviour
         maxDegrees = GetDifferenceOfDegrees(firstAngle, lastAngle);
 
         // Debug.Log("Max degrees: " + firstAngle.ToString() + "->" + lastAngle.ToString() + " = " + maxDegrees.ToString());
-    }
-
-    public override void OnPickup() {
-        isPickingUp = true;
-    }
-
-    public override void OnDrop() {
-        Debug.Log("Lever " + this.gameObject.name + " dropped");
-
-        isPickingUp = false;
-
-        if (GetNeedsSnapping()) {
-            Debug.Log("Snapping to nearest target angle...");
-            visibleRotationOnAxis = GetSnappedRotatorRotationOnAxis();
-        } else {
-            Debug.Log("Does not need snapping");
-        }
-
-        // MovePickupToHandle();
     }
 
     void MovePickupToHandle() {
@@ -175,45 +183,133 @@ public class Lever : UdonSharpBehaviour
         }
     }
 
-    void LateUpdate() {
-        // NOTE: Always modify VRCPickup transforms in LateUpdate
-
-        if (GetIsOwner()) {
-            ClampPickupPosition();
-        } else {
-            SyncPickupPosition();
-        }
-        
-        // need to do this otherwise flickering as pickup only clamps here
-        MoveRotatorVisibly();
-    }
-
     bool GetIsOwner() {
         return Networking.IsOwner(this.gameObject);
     }
 
     bool GetNeedsSnapping() {
-        // return false;
         return targetAngles.Length >= 2;
     }
 
-    void Update() {
-        if (GetIsOwner()) {
-            if (isPickingUp) {
-                visibleRotationOnAxis = GetRotatorRotationOnAxis();
-            }
+    void FreezePickup() {
+        this.transform.position = new Vector3(
+            initialPickupPosition.x,
+            initialPickupPosition.y,
+            initialPickupPosition.z
+        );
+    }
 
-            // prevent self DDOS
-            if (visibleRotationOnAxis != syncedVisibleRotationOnAxis) {
-                syncedVisibleRotationOnAxis = visibleRotationOnAxis;
-            }
+    void MovePickupToHand() {
+        if (isPickingUp) {
+            var handPosition = GetHandPosition();
 
-            pickupPositionOnAxis = isVertical ? this.transform.position.y : this.transform.position.z;
+            lastKnownPickupPosition = new Vector3(
+                initialPickupPosition.x,
+                initialPickupPosition.y,
+                handPosition.z
+            );
+        }
+        
+        // need to do this each frame otherwise it moves with the rotator causing an infinite rotation effect
+        this.transform.position = lastKnownPickupPosition;
+    }
 
-            // prevent self DDOS
-            if (pickupPositionOnAxis != syncedPickupPositionOnAxis) {
-                syncedPickupPositionOnAxis = pickupPositionOnAxis;
+    Vector3 GetHandPosition(Transform handTransformOverride = null) {
+        #if UNITY_EDITOR
+        if (handTransformOverride != null) {
+            return handTransformOverride.position;
+        } else if (fakeHand != null) {
+            return fakeHand.position;
+        } else {
+            return new Vector3(0, 0, 0);
+        }
+        #else
+        return Networking.LocalPlayer.GetBonePosition(HumanBodyBones.RightHand);
+        #endif
+    }
+
+    bool GetIsHandInsideCollider() {
+        Bounds colliderBounds = boxCollider.bounds;
+
+        var handPosition = GetHandPosition();
+
+        bool isInside = colliderBounds.Contains(handPosition);
+
+        return isInside;
+    }
+
+    void DetectHandHover() {
+        if (boxCollider == null) {
+            return;
+        }
+
+        // prevent edge case where boxcollider physically moves away from finger on push in so triggers another collision
+        if (timeBeforeNextCollisionCheck != -1) {
+            if (Time.time > timeBeforeNextCollisionCheck) {
+                timeBeforeNextCollisionCheck = -1;
             }
+            return;
+        }
+
+        var isHandInsideCollider = GetIsHandInsideCollider();
+
+        if (!hasHandEnteredCollider) {
+            if (isHandInsideCollider) {
+                hasHandEnteredCollider = true;
+
+                OnHandEnter();
+
+                timeBeforeNextCollisionCheck = Time.time + 0.5f; // Time.time in seconds
+            }
+        } else {
+            if (!isHandInsideCollider) {
+                hasHandEnteredCollider = false;
+
+                OnHandLeave();
+            }
+        }
+    }
+
+    void OnHandEnter() {
+        Debug.Log("Lever \"" + this.gameObject.name + "\" hand enter");
+
+        if (isPickingUp) {
+            return;
+        }
+
+        renderer.material = highlightMaterial;
+    }
+
+    void SwitchToStandardMaterial() {
+        renderer.material = standardMaterial;
+    }
+
+    void OnHandLeave() {
+        Debug.Log("Lever \"" + this.gameObject.name + "\" hand leave");
+
+        SwitchToStandardMaterial();
+    }
+
+    void OnPickup() {
+        Debug.Log("Lever \"" + this.gameObject.name + "\" pickup");
+
+        isPickingUp = true;
+
+        Networking.SetOwner(Networking.LocalPlayer, this.gameObject);
+
+        SwitchToStandardMaterial();
+    }
+
+    void OnDrop() {
+        Debug.Log("Lever \"" + this.gameObject.name + "\" drop");
+
+        isPickingUp = false;
+
+        if (GetNeedsSnapping()) {
+            Debug.Log("Snapping to nearest target angle...");
+            visibleRotationOnAxis = GetSnappedRotatorRotationOnAxis();
+        } else {
+            Debug.Log("Does not need snapping");
         }
     }
 

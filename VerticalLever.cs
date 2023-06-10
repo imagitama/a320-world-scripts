@@ -6,11 +6,6 @@ using VRC.SDK3.Components;
 using VRC.Udon;
 using VRC.Udon.Common.Interfaces;
 
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-using UnityEditor;
-using UdonSharpEditor;
-#endif
-
 public class VerticalLever : UdonSharpBehaviour
 {
     float visibleRotationOnAxis;
@@ -48,34 +43,6 @@ public class VerticalLever : UdonSharpBehaviour
     public bool isVertical = true;
 
     bool needsToSnap = false;
-
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-    string GetGizmoLabel() {
-
-        if (isPickingUp) {
-            if (GetNeedsSnapping()) {
-                return FindNearestAngleIndexForRotator() + " - " + FindNearestAngleForRotator();
-            } else {
-                return "Picking";
-            }
-        }
-
-        if (!GetNeedsSnapping()) {
-            return "SnapOff";
-        }
-        
-        if (lastSelectedIndex == -1) {
-            return "NoSelected";
-        }
-
-        return lastSelectedIndex + " - " + targetAngles[lastSelectedIndex];
-    }
-
-    [DrawGizmo (GizmoType.Selected | GizmoType.NonSelected)]
-    void OnDrawGizmos() {
-        // Handles.Label(transform.position, GetGizmoLabel());
-    }
-#endif
 
     void Start()
     {

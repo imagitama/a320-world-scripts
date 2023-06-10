@@ -6,11 +6,6 @@ using VRC.SDK3.Components;
 using VRC.Udon;
 using VRC.Udon.Common.Interfaces;
 
-#if UNITY_EDITOR && !COMPILER_UDONSHARP
-using UnityEditor;
-using UdonSharpEditor;
-#endif
-
 public class Knob : UdonSharpBehaviour
 {
     float visibleRotationOnAxis;
@@ -47,8 +42,19 @@ public class Knob : UdonSharpBehaviour
     Transform handleTarget;
     public float rotationOffset = 0f;
     public float rotationOffsetForReal;
-
     bool needsToSnap = false;
+    public bool isHorizontal = false;
+
+    // hand interaction
+    SphereCollider sphereCollider;
+    bool hasHandEnteredCollider = false;
+    float timeBeforeNextCollisionCheck = -1;
+    Renderer renderer;
+    Material standardMaterial;
+    public Material highlightMaterial;
+    Quaternion lastKnownPickupRotation;
+    // debug
+    Transform fakeHand;
 
     void Start()
     {
@@ -56,6 +62,7 @@ public class Knob : UdonSharpBehaviour
         rotatorInitialRotation = rotator.rotation;
 
         initialPickupRotation = this.transform.rotation;
+        lastKnownPickupRotation = initialPickupRotation;
         initialPickupPosition = this.transform.position;
 
         SetMaxDegrees();
@@ -63,7 +70,41 @@ public class Knob : UdonSharpBehaviour
         if (GetIsOwner() && GetNeedsSnapping()) {
             visibleRotationOnAxis = GetSnappedRotatorRotationOnAxis();
         }
+
+        #if UNITY_EDITOR
+        fakeHand = GameObject.Find("/FakeHand").transform;
+        #endif
+
+        renderer = rotator.GetComponent<Renderer>();
+        sphereCollider = rotator.GetComponent<SphereCollider>();
+        standardMaterial = renderer.material;
     }
+
+    void Update() {
+        if (GetIsOwner()) {
+            MovePickupToHand();
+            
+            if (isPickingUp) {
+                visibleRotationOnAxis = GetRotatorRotationOnAxis();
+            }
+
+            if (visibleRotationOnAxis != syncedVisibleRotationOnAxis) {
+                syncedVisibleRotationOnAxis = visibleRotationOnAxis;
+            }
+
+            pickupRotationOnAxis = isHorizontal ? this.transform.rotation.eulerAngles.y : this.transform.rotation.eulerAngles.z;
+
+            if (pickupRotationOnAxis != syncedPickupRotationOnAxis) {
+                syncedPickupRotationOnAxis = pickupRotationOnAxis;
+            }
+        }
+
+        DetectHandHover();
+        
+        MoveRotatorVisibly();
+    }
+    
+    //////////////
 
     public override void OnDeserialization() {
         if (GetIsOwner()) {
@@ -80,6 +121,152 @@ public class Knob : UdonSharpBehaviour
         selectedIndex = syncedSelectedIndex;
     }
 
+   public override void InputGrab(bool value, VRC.Udon.Common.UdonInputEventArgs args) {
+        if (value == true) {
+            Debug.Log("Player grab");
+
+            if (hasHandEnteredCollider) {
+                OnPickup();
+            }
+        } else {
+            Debug.Log("Player drop");
+
+            if (isPickingUp) {
+                OnDrop();
+            }
+        }
+    }
+    
+    //////////////
+
+    Vector3 GetHandPosition() {
+        #if UNITY_EDITOR
+        return fakeHand.position;
+        #else
+        return Networking.LocalPlayer.GetBonePosition(HumanBodyBones.RightHand);
+        #endif
+    }
+
+    Quaternion GetHandRotation() {
+        #if UNITY_EDITOR
+        return fakeHand.rotation;
+        #else
+        return Networking.LocalPlayer.GetBoneRotation(HumanBodyBones.RightHand);
+        #endif
+    }
+
+    void MovePickupToHand() {
+        if (isPickingUp) {
+            var handRotation = GetHandRotation();
+
+            if (isHorizontal) {
+                lastKnownPickupRotation = Quaternion.Euler(
+                    initialPickupRotation.eulerAngles.x,
+                    handRotation.eulerAngles.y + 180,
+                    initialPickupRotation.eulerAngles.z
+                );
+            } else {
+                lastKnownPickupRotation = Quaternion.Euler(
+                    initialPickupRotation.eulerAngles.x,
+                    initialPickupRotation.eulerAngles.y,
+                    handRotation.eulerAngles.z + 180
+                );
+            }
+
+            // Debug.Log("Move To Hand " + lastKnownPickupRotation);
+        } else {
+            // Debug.Log("DO NOT Move To Hand " + lastKnownPickupRotation);
+        }
+        
+        // need to do this each frame otherwise it moves with the rotator causing an infinite rotation effect
+        this.transform.rotation = lastKnownPickupRotation;
+    }
+
+    bool GetIsHandInsideCollider() {
+        Bounds colliderBounds = sphereCollider.bounds;
+
+        var handPosition = GetHandPosition();
+
+        bool isInside = colliderBounds.Contains(handPosition);
+
+        return isInside;
+    }
+
+    void DetectHandHover() {
+        if (sphereCollider == null) {
+            return;
+        }
+
+        // prevent edge case where boxcollider physically moves away from finger on push in so triggers another collision
+        if (timeBeforeNextCollisionCheck != -1) {
+            if (Time.time > timeBeforeNextCollisionCheck) {
+                timeBeforeNextCollisionCheck = -1;
+            }
+            return;
+        }
+
+        var isHandInsideCollider = GetIsHandInsideCollider();
+
+        if (!hasHandEnteredCollider) {
+            if (isHandInsideCollider) {
+                hasHandEnteredCollider = true;
+
+                OnHandEnter();
+
+                timeBeforeNextCollisionCheck = Time.time + 0.5f; // Time.time in seconds
+            }
+        } else {
+            if (!isHandInsideCollider) {
+                hasHandEnteredCollider = false;
+
+                OnHandLeave();
+            }
+        }
+    }
+
+    void OnHandEnter() {
+        Debug.Log("Knob \"" + this.gameObject.name + "\" hand enter");
+
+        if (isPickingUp) {
+            return;
+        }
+
+        renderer.material = highlightMaterial;
+    }
+
+    void SwitchToStandardMaterial() {
+        renderer.material = standardMaterial;
+    }
+
+    void OnHandLeave() {
+        Debug.Log("Knob \"" + this.gameObject.name + "\" hand leave");
+
+        SwitchToStandardMaterial();
+    }
+
+    void OnPickup() {
+        Debug.Log("Knob \"" + this.gameObject.name + "\" pickup");
+
+        Networking.SetOwner(Networking.LocalPlayer, this.gameObject);
+
+        isPickingUp = true;
+
+        SwitchToStandardMaterial();
+    }
+
+    void OnDrop() {
+        Debug.Log("Knob \"" + this.gameObject.name + "\" drop");
+
+        isPickingUp = false;
+
+        if (GetNeedsSnapping()) {
+            Debug.Log("Snapping to nearest target angle...");
+            visibleRotationOnAxis = GetSnappedRotatorRotationOnAxis();
+        } else {
+            Debug.Log("Does not need snapping");
+        }
+    }
+
     void SetMaxDegrees() {
         if (targetAngles.Length < 2) {
             return;
@@ -93,42 +280,8 @@ public class Knob : UdonSharpBehaviour
         // Debug.Log("Max degrees: " + firstAngle.ToString() + "->" + lastAngle.ToString() + " = " + maxDegrees.ToString());
     }
 
-    public override void OnPickup() {
-        isPickingUp = true;
-    }
-
-    public override void OnDrop() {
-        Debug.Log("Knob " + this.gameObject.name + " dropped");
-
-        isPickingUp = false;
-
-        if (GetNeedsSnapping()) {
-            Debug.Log("Snapping to nearest target angle...");
-            visibleRotationOnAxis = GetSnappedRotatorRotationOnAxis();
-        } else {
-            Debug.Log("Does not need snapping");
-        }
-    }
-
-    void MovePickupToHandle() {
-        this.transform.position = handleTarget.position;
-    }
-
     float GetDifferenceOfDegrees(float degreesA, float degreesB) {
         return (degreesB - degreesA + 360) % 360;
-    }
-
-    void ClampPickup() {
-        this.transform.position = initialPickupPosition;
-        this.transform.rotation = Quaternion.Euler(initialPickupRotation.x, initialPickupRotation.y, pickupRotationOnAxis);
-    }
-
-    void LateUpdate() {
-        // NOTE: Always modify VRCPickup transforms in LateUpdate
-
-        if (GetIsOwner()) {
-            ClampPickup();
-        }
     }
 
     bool GetIsOwner() {
@@ -139,28 +292,6 @@ public class Knob : UdonSharpBehaviour
         return targetAngles.Length >= 2;
     }
 
-    void Update() {
-        if (GetIsOwner()) {
-            if (isPickingUp) {
-                visibleRotationOnAxis = GetRotatorRotationOnAxis();
-            }
-
-            // prevent self DDOS
-            if (visibleRotationOnAxis != syncedVisibleRotationOnAxis) {
-                syncedVisibleRotationOnAxis = visibleRotationOnAxis;
-            }
-
-            pickupRotationOnAxis = this.transform.rotation.eulerAngles.z;
-
-            // prevent self DDOS
-            if (pickupRotationOnAxis != syncedPickupRotationOnAxis) {
-                syncedPickupRotationOnAxis = pickupRotationOnAxis;
-            }
-        }
-        
-        MoveRotatorVisibly();
-    }
-
     void MoveRotatorVisibly() {
         if (rotator == null) {
             return;
@@ -169,6 +300,14 @@ public class Knob : UdonSharpBehaviour
         var angle = visibleRotationOnAxis;
 
         rotator.rotation = Quaternion.Euler(rotatorInitialRotation.eulerAngles.x, rotatorInitialRotation.eulerAngles.y, angle);
+
+        /*
+        
+        rotator.rotation = (
+            isHorizontal 
+                ? Quaternion.Euler(rotatorInitialRotation.eulerAngles.x, rotatorInitialRotation.eulerAngles.y, angle)
+                : Quaternion.Euler(rotatorInitialRotation.eulerAngles.x, rotatorInitialRotation.eulerAngles.y, angle)
+        ); */
     }
 
     float GetRotatorRotationOnAxis() {
@@ -176,7 +315,7 @@ public class Knob : UdonSharpBehaviour
             return 0f;
         }
 
-        return this.transform.rotation.eulerAngles.z * -1;
+        return (isHorizontal ? this.transform.rotation.eulerAngles.y : (this.transform.rotation.eulerAngles.z * -1));
     }
 
     float GetPositiveDegrees(float degrees) {
@@ -279,8 +418,6 @@ public class Knob : UdonSharpBehaviour
         }
 
         var nearestAnglePositiveDegrees = ConvertToPositiveDegrees(nearestAngle);
-        
-        // var rotatorRotation = ConvertDegreesOutOf360ToLeverRotationValue(nearestAnglePositiveDegrees);
 
         var rotatorRotation = nearestAnglePositiveDegrees + 180f;
 
@@ -305,8 +442,7 @@ public class Knob : UdonSharpBehaviour
         displayToUpdate.OnKnobIndex(newIndex);
     }
 
-    private static float AngleDifference(float a, float b)
-    {
+    float AngleDifference(float a, float b) {
         float difference = Mathf.Abs(a - b) % 360;
         if (difference > 180)
         {
