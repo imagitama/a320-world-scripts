@@ -55,7 +55,7 @@ public class PushButton : UdonSharpBehaviour
         boxCollider = this.gameObject.GetComponent<BoxCollider>();
         
         #if UNITY_EDITOR
-        fakeFinger = GameObject.Find("/FakeHand/FakeFinger").transform;
+        fakeFinger = GameObject.Find("/FakeHand/Index/IndexDistal").transform;
         #endif
     }
 
