@@ -23,7 +23,8 @@ public enum InputTypes {
     Switch,
     PushButton,
     ThrottleLever,
-    FlapsLever
+    FlapsLever,
+    GearLever
 }
 
 public enum AxisInputMethods {
@@ -632,7 +633,7 @@ public class AxisInput : UdonSharpBehaviour
         Vector3 direction = this.transform.position - rotator.position;
 
         // NOTE: always between 0-180 degrees
-        float angle = Vector3.Angle(Vector3.back, direction);
+        float angle = Vector3.Angle(inputType == InputTypes.GearLever ? Vector3.up : Vector3.back, direction);
 
         // Debug.Log("GetPickupMovementAsDegreesOf360 direction=" + direction + " angle=" + angle + "d");
 
