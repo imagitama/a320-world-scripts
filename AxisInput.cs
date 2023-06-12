@@ -56,12 +56,10 @@ public class AxisInput : UdonSharpBehaviour
     public float defaultRotation;
     public float[] targetAngles;
     public AxisInputReceiver[] receivers;
-
     public float fromAngle = -1f;
     public float toAngle = -1f;
     public float visualOffset = 0f;
     public float snappingOffset = 0f;
-    
     public Material highlightMaterial;
 
     Vector3 initialPickupPosition;
@@ -70,16 +68,15 @@ public class AxisInput : UdonSharpBehaviour
     Transform rotator;
     bool isPickingUp = false;
     float maxDegrees;
-
     BoxCollider boxCollider;
     SphereCollider sphereCollider;
     bool hasHandEnteredCollider = false;
     float timeBeforeNextCollisionCheck = -1;
     Renderer meshRenderer;
     Material standardMaterial;
-
     Vector3 lastKnownPickupPosition;
     Quaternion lastKnownPickupRotation;
+    bool isOwner;
 
     // debug
     Transform fakeHand;
@@ -166,6 +163,10 @@ public class AxisInput : UdonSharpBehaviour
 #endif
 
     //////////////
+
+    public override void OnOwnershipTransferred(VRCPlayerApi newOwner) {
+        isOwner = (newOwner == Networking.LocalPlayer);
+    }
 
     public override void OnDeserialization() {
         if (GetIsOwner()) {
@@ -257,8 +258,16 @@ public class AxisInput : UdonSharpBehaviour
         return rotator.gameObject.name;
     }
 
+    // Networking.IsOwner is laggy
     bool GetIsOwner() {
-        return Networking.IsOwner(this.gameObject);
+        if (isOwner == null) {
+            isOwner = Networking.IsOwner(this.gameObject);
+        }
+        return isOwner;
+    }
+
+    void BecomeOwner() {
+        Networking.SetOwner(Networking.LocalPlayer, this.gameObject);
     }
 
     bool GetNeedsSnapping() {
@@ -413,7 +422,7 @@ public class AxisInput : UdonSharpBehaviour
 
         isPickingUp = true;
 
-        Networking.SetOwner(Networking.LocalPlayer, this.gameObject);
+        BecomeOwner();
 
         SwitchToStandardMaterial();
     }

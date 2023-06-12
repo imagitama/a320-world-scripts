@@ -28,8 +28,8 @@ public class PushButton : UdonSharpBehaviour
     BoxCollider boxCollider;
     bool hasFingerEnteredCollider = false;
     float timeBeforeNextCollisionCheck = -1;
-
     bool needsToPlayAnimation = false;
+    bool isOwner;
 
     // debug
     Transform fakeFinger;
@@ -69,6 +69,10 @@ public class PushButton : UdonSharpBehaviour
 
     //////////////
 
+    public override void OnOwnershipTransferred(VRCPlayerApi newOwner) {
+        isOwner = (newOwner == Networking.LocalPlayer);
+    }
+
     public override void OnDeserialization() {
         if (GetIsOwner()) {
             return;
@@ -84,8 +88,16 @@ public class PushButton : UdonSharpBehaviour
 
     //////////////
 
+    // Networking.IsOwner is laggy
     bool GetIsOwner() {
-        return Networking.IsOwner(this.gameObject);
+        if (isOwner == null) {
+            isOwner = Networking.IsOwner(this.gameObject);
+        }
+        return isOwner;
+    }
+
+    void BecomeOwner() {
+        Networking.SetOwner(Networking.LocalPlayer, this.gameObject);
     }
 
     Vector3 GetIndexFingerPosition() {
@@ -147,7 +159,7 @@ public class PushButton : UdonSharpBehaviour
     void OnFingerInteract() {
         Debug.Log("PushButton \"" + this.gameObject.name + "\" has been interacted with");
 
-        Networking.SetOwner(Networking.LocalPlayer, this.gameObject);
+        BecomeOwner();
 
         ToggleState();
 
