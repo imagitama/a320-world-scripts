@@ -43,9 +43,13 @@ public class A320 : UdonSharpBehaviour
             fingerPositionBall = GameObject.Find("/DebuggingStuff/FingerPosition").transform;
         }
         if (fakeHand == null) {
-            fakeHand = GameObject.Find("/FakeHand").transform;
+            var fakeHandObj = GameObject.Find("/FakeHand");
+
+            if (fakeHandObj != null) {
+                fakeHand = fakeHandObj.transform;
+            }
         }
-        if (fakeFinger == null) {
+        if (fakeFinger == null && fakeHand != null) {
             fakeFinger = fakeHand.Find("Index/IndexDistal");
         }
 
@@ -57,9 +61,13 @@ public class A320 : UdonSharpBehaviour
     [DrawGizmo (GizmoType.Selected | GizmoType.NonSelected)]
     void OnDrawGizmos() {
         if (fakeHand == null) {
-            fakeHand = GameObject.Find("/FakeHand").transform;
+            var fakeHandObj = GameObject.Find("/FakeHand");
+
+            if (fakeHandObj != null) {
+                fakeHand = fakeHandObj.transform;
+            }
         }
-        if (fakeFinger == null) {
+        if (fakeFinger == null && fakeHand != null) {
             fakeFinger = fakeHand.Find("Index/IndexDistal");
         }
 
@@ -85,7 +93,10 @@ public class A320 : UdonSharpBehaviour
     
     Vector3 GetHandPosition() {
         #if UNITY_EDITOR
-        return fakeHand.position;
+        if (fakeHand != null) {
+            return fakeHand.position;
+        }
+        return Vector3.zero;
         #else
         if (Networking.LocalPlayer == null) {
             return Vector3.zero;
@@ -97,11 +108,14 @@ public class A320 : UdonSharpBehaviour
 
     Vector3 GetBonePosition(HumanBodyBones humanBodyBone) {
         #if UNITY_EDITOR
-        if (humanBodyBone == HumanBodyBones.RightIndexDistal) {
-            return fakeHand.Find("Index/IndexDistal").position;
-        } else {
-            return fakeHand.Find("Index").position;
+        if (fakeHand != null) {
+            if (humanBodyBone == HumanBodyBones.RightIndexDistal) {
+                return fakeHand.Find("Index/IndexDistal").position;
+            } else {
+                return fakeHand.Find("Index").position;
+            }
         }
+        return Vector3.zero;
         #else
         return Networking.LocalPlayer.GetBonePosition(humanBodyBone);
         #endif
@@ -109,11 +123,14 @@ public class A320 : UdonSharpBehaviour
 
     Quaternion GetBoneRotation(HumanBodyBones humanBodyBone) {
         #if UNITY_EDITOR
-        if (humanBodyBone == HumanBodyBones.RightIndexDistal) {
-            return fakeHand.Find("Index/IndexDistal").rotation;
-        } else {
-            return fakeHand.Find("Index").rotation;
+        if (fakeHand != null) {
+            if (humanBodyBone == HumanBodyBones.RightIndexDistal) {
+                return fakeHand.Find("Index/IndexDistal").rotation;
+            } else {
+                return fakeHand.Find("Index").rotation;
+            }
         }
+        return Quaternion.identity;
         #else
         return Networking.LocalPlayer.GetBoneRotation(humanBodyBone);
         #endif

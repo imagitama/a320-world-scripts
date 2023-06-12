@@ -122,17 +122,15 @@ public class AxisInput : UdonSharpBehaviour
         standardMaterial = meshRenderer.material;
         
         BeginUpdateLoop();
-        BeginSyncingVars();
+
+
+        
+        // SendCustomEventDelayedSeconds(nameof(BeginTestLoop), 5);
     }
 
     public void BeginUpdateLoop() {
         CustomUpdate();
         SendCustomEventDelayedFrames(nameof(BeginUpdateLoop), 5);
-    }
-
-    public void BeginSyncingVars() {
-        SyncUdonVarsIfNecessary();
-        SendCustomEventDelayedFrames(nameof(BeginUpdateLoop), 15);
     }
 
     void CustomUpdate() {
@@ -143,17 +141,18 @@ public class AxisInput : UdonSharpBehaviour
                 rotatorMovementOnAxis = GetRotatorRotationOnAxis();
             }
 
-            if (rotatorMovementOnAxis != syncedRotatorMovementOnAxis) {
-                syncedRotatorMovementOnAxis = rotatorMovementOnAxis;
-            }
-
             pickupMovementOnAxis = (inputMethod == AxisInputMethods.Slide ? this.transform.position[(int)pickupAxis] : this.transform.rotation[(int)pickupAxis]);
             
-            if (pickupMovementOnAxis != syncedPickupMovementOnAxis) {
-                syncedPickupMovementOnAxis = pickupMovementOnAxis;
+            var needToSync = (pickupMovementOnAxis != syncedPickupMovementOnAxis || rotatorMovementOnAxis != syncedRotatorMovementOnAxis);
+            
+            syncedRotatorMovementOnAxis = rotatorMovementOnAxis;
+            syncedPickupMovementOnAxis = pickupMovementOnAxis;
+
+            if (needToSync) {
+                SyncVarsToOtherPlayers();
             }
         } else {
-            SyncPickupTransform();
+            UpdatePickupTransform();
         }
         
         MoveRotatorVisibly();
@@ -180,15 +179,16 @@ public class AxisInput : UdonSharpBehaviour
 
     //////////////
 
+    public override void OnPlayerJoined(VRCPlayerApi newPlayer) {
+        RequestSerialization();
+    }
+
     public override void OnOwnershipTransferred(VRCPlayerApi newOwner) {
-        isOwner = (newOwner == Networking.LocalPlayer);
+        isOwner = (newOwner.playerId == Networking.LocalPlayer.playerId);
+        RequestSerialization();
     }
 
     public override void OnDeserialization() {
-        if (GetIsOwner()) {
-            return;
-        }
-
         rotatorMovementOnAxis = syncedRotatorMovementOnAxis;
         pickupMovementOnAxis = syncedPickupMovementOnAxis;
     }
@@ -212,14 +212,12 @@ public class AxisInput : UdonSharpBehaviour
 
     //////////////
 
-    void SyncUdonVarsIfNecessary() {
+    void SyncVarsToOtherPlayers() {
         if (!GetIsOwner()) {
             return;
         }
 
-        if (syncedPickupMovementOnAxis != pickupMovementOnAxis || syncedRotatorMovementOnAxis != rotatorMovementOnAxis) {
-            RequestSerialization();
-        }
+        RequestSerialization();
     }
 
     void InitializePickupTransform() {
@@ -264,7 +262,7 @@ public class AxisInput : UdonSharpBehaviour
         return (degreesB - degreesA + 360) % 360;
     }
 
-    void SyncPickupTransform() {
+    void UpdatePickupTransform() {
         if (inputMethod == AxisInputMethods.Slide) {
             this.transform.position = new Vector3(
                 pickupAxis == Axis.X ? pickupMovementOnAxis : initialPickupPosition.x,
@@ -284,7 +282,6 @@ public class AxisInput : UdonSharpBehaviour
         return rotator.gameObject.name;
     }
 
-    // Networking.IsOwner is laggy
     bool GetIsOwner() {
         if (isOwner == null) {
             isOwner = Networking.IsOwner(this.gameObject);
@@ -350,16 +347,16 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     Vector3 GetHandPosition() {
-        #if UNITY_EDITOR
+#if UNITY_EDITOR
         return fakeHand.position;
-        #else
+#else
         if (Networking.LocalPlayer == null) {
             return Vector3.zero;
         }
 
         var trackingData = Networking.LocalPlayer.GetTrackingData(VRC.SDKBase.VRCPlayerApi.TrackingDataType.RightHand);
         return trackingData.position;
-        #endif
+#endif
     }
 
     Vector3 GetIndexFingerTipPosition() {
@@ -391,12 +388,12 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     Quaternion GetHandRotation() {
-        #if UNITY_EDITOR
+#if UNITY_EDITOR
         return fakeHand.rotation;
-        #else
+#else
         var trackingData = Networking.LocalPlayer.GetTrackingData(VRC.SDKBase.VRCPlayerApi.TrackingDataType.RightHand);
         return trackingData.rotation;
-        #endif
+#endif
     }
 
     bool GetIsBoneInsideCollider() {
@@ -454,7 +451,13 @@ public class AxisInput : UdonSharpBehaviour
             return;
         }
 
+        VibrateController();
+
         meshRenderer.material = highlightMaterial;
+    }
+
+    void VibrateController() {
+        Networking.LocalPlayer.PlayHapticEventInHand(VRC.SDK3.Components.VRCPickup.PickupHand.Right, 1f, 1f, 1f);
     }
 
     void SwitchToStandardMaterial() {
@@ -592,11 +595,6 @@ public class AxisInput : UdonSharpBehaviour
 
             return newRotationOnAxis;
         } else {
-            // if (invertTwist) {
-            //     Debug.Log("Inverting " + currentRotationValue360 + " to " + (360 - currentRotationValue360));
-            //     currentRotationValue360 = 360 - currentRotationValue360;
-            // }
-
             var clampedDegrees360 = (fromAngle != -1 && toAngle != -1 ? ClampDegrees(currentRotationValue360, fromAngle, toAngle) : currentRotationValue360);
 
             var degreesWithOffset = ConvertToPositiveDegrees(clampedDegrees360 + (inputMethod == AxisInputMethods.Twist ? 180f : 135f));
@@ -614,30 +612,17 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     float ClampDegrees(float angle, float min, float max) {
-        // angle 170, min 225, max 135
-        // should clamp to 135
-        
-        // 170 > max YES and 225 = 0 NO
         if (angle > max && min == 0) {
             min = 360;
         }
         
         var center = min > max ? ((min - max) / 2) : Mathf.DeltaAngle(min, max);
 
-        if (this.transform.parent.gameObject.name == "KNOB_OVHD_READINGLTL.004") {
-            Debug.Log("ClampDegrees angle=" + angle + " min=" + min + " max=" + max + " center=" + center);
-        }
-
-        // 170 < 225 YES and 170 > 135 YES
         if (angle < min && angle > max) {
-            // YES
             if (min > max) {
-                // 170 > (135 + 45 = 180)
                 if (angle > (max + center)) {
-                    // 135
                     return min;
                 } else {
-                    // 225
                     return max;
                 } 
             } else {
@@ -674,10 +659,6 @@ public class AxisInput : UdonSharpBehaviour
 
         float percent = newDegrees / totalDegrees * 100; // 165 / 90 * 100
 
-        // if (this.transform.parent.gameObject.name == "KNOB_OVHD_READINGLTL.004") {
-        //     Debug.Log("DEG  " + degrees + "  from:" + fromAngle + " to:" + toAngle + "  ->  %" + percent);
-        // }
-
         return percent;
     }
 
@@ -699,7 +680,6 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     float GetPickupMovementAsDegreesOf360() {
-        // knobs
         if (inputMethod == AxisInputMethods.Twist) {
             var currentRotationValue = this.transform.rotation.eulerAngles[(int)pickupAxis];
 
@@ -824,4 +804,36 @@ public class AxisInput : UdonSharpBehaviour
 
         return nearestAngleIndex;
     }
+
+
+
+
+
+
+
+    // public void BeginTestLoop() {
+    //     if (this.transform.parent.gameObject.name != "LEVER_THROTTLE_1.004") {
+    //         return;
+    //     }
+
+
+    //     if (!GetIsOwner()) {
+    //         Debug.Log("I am not the owner so I cannot do the test run");
+    //         return;
+    //     }
+
+
+    //     Debug.Log("I am the owner so I am proceeding with test run...");
+
+
+    //     isPickingUp = true;
+
+
+    //     var newZ = fakeHand.position.z == 11.1884f ? 11.6498f : 11.1884f;
+
+    //     fakeHand.position = new Vector3(fakeHand.position.x, fakeHand.position.y, newZ);
+        
+
+    //     SendCustomEventDelayedSeconds(nameof(BeginTestLoop), 5);
+    // }
 }

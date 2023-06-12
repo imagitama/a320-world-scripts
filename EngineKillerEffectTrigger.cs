@@ -6,13 +6,11 @@ using VRC.Udon;
 
 public class EngineKillerEffectTrigger : UdonSharpBehaviour
 {
-    float timeToHide = 0f;
     Transform particle;
     AudioSource audioSource;
 
     void Start() {
         particle = this.transform.parent.Find("Particle");
-
         audioSource = this.transform.parent.Find("Audio").GetComponent<AudioSource>();
     }
 
@@ -27,19 +25,13 @@ public class EngineKillerEffectTrigger : UdonSharpBehaviour
         audioSource.Play();
     }
 
-    void Update() {
-        if (timeToHide != 0 && Time.time >= timeToHide) {
-            StopParticleEffect();
-            timeToHide = 0;
-        }
-    }
-
     void PlayParticleEffectForTime() {
         particle.gameObject.SetActive(true);
-        timeToHide = Time.time + 5f;
+  
+        SendCustomEventDelayedSeconds("StopParticleEffect", 5); // 5 seconds
     }
 
-    void StopParticleEffect() {
+    public void StopParticleEffect() {
         particle.gameObject.SetActive(false);
     }
 }

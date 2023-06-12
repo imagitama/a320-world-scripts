@@ -29,16 +29,12 @@ public class PushButton : UdonSharpBehaviour
     BoxCollider boxCollider;
     bool hasFingerEnteredCollider = false;
     float timeBeforeNextCollisionCheck = -1;
-    bool needsToPlayAnimation = false;
     bool isOwner;
 
     // debug
     Transform fakeFinger;
 
     void Start() {
-        syncedIsSeqOneOn = isSeqOneOn;
-        syncedIsSeqTwoOn = isSeqTwoOn;
-
         for (int i = 0; i < this.transform.childCount; i++) {
             Transform child = this.transform.GetChild(i);
 
@@ -60,7 +56,6 @@ public class PushButton : UdonSharpBehaviour
         #endif
 
         BeginUpdateLoop();
-        BeginSyncingVars();
     }
 
     public void BeginUpdateLoop() {
@@ -68,51 +63,51 @@ public class PushButton : UdonSharpBehaviour
         SendCustomEventDelayedFrames(nameof(BeginUpdateLoop), 5);
     }
 
-    public void BeginSyncingVars() {
-        SyncUdonVarsIfNecessary();
-        SendCustomEventDelayedFrames(nameof(BeginUpdateLoop), 15);
-    }
-
     void CustomUpdate() {
-        CheckIfSeqTwoNeedsUpdating();
-        
-        UpdateVisually();
-
         DetectFingerPress();
     }
 
     //////////////
 
+    public override void OnPlayerJoined(VRCPlayerApi newPlayer) {
+        SyncVarsToOtherPlayers();
+    }
+
     public override void OnOwnershipTransferred(VRCPlayerApi newOwner) {
-        isOwner = (newOwner == Networking.LocalPlayer);
+        Debug.Log("PushButton \"" + GetDisplayName() + "\"  has new owner \"" + newOwner.displayName + "\"");
+
+        isOwner = Networking.IsOwner(this.gameObject);
+
+        if (isOwner) {
+            Debug.Log("That is me!");
+        }
+
+        SyncVarsToOtherPlayers();
     }
 
     public override void OnDeserialization() {
-        if (GetIsOwner()) {
-            return;
-        }
-
-        if (isSeqOneOn != syncedIsSeqOneOn || isSeqTwoOn != syncedIsSeqTwoOn) {
-            needsToPlayAnimation = true;
-        }
-
         isSeqOneOn = syncedIsSeqOneOn;
         isSeqTwoOn = syncedIsSeqTwoOn;
     }
 
     //////////////
 
-    void SyncUdonVarsIfNecessary() {
+    void SyncVarsToOtherPlayers() {
         if (!GetIsOwner()) {
             return;
         }
 
-        if (syncedIsSeqOneOn != isSeqOneOn || syncedIsSeqTwoOn != isSeqTwoOn) {
-            RequestSerialization();
-        }
+        RequestSerialization();
     }
 
-    // Networking.IsOwner is laggy
+    string GetDisplayName() {
+        return this.gameObject.name;
+    }
+
+    void VibrateController() {
+        Networking.LocalPlayer.PlayHapticEventInHand(VRC.SDK3.Components.VRCPickup.PickupHand.Right, 1f, 1f, 1f);
+    }
+
     bool GetIsOwner() {
         if (isOwner == null) {
             isOwner = Networking.IsOwner(this.gameObject);
@@ -121,7 +116,9 @@ public class PushButton : UdonSharpBehaviour
     }
 
     void BecomeOwner() {
+        Debug.Log("PushButton \"" + GetDisplayName() + "\" local player wants to own it");
         Networking.SetOwner(Networking.LocalPlayer, this.gameObject);
+        isOwner = true;
     }
 
     Vector3 GetIndexFingerTipPosition() {
@@ -197,42 +194,39 @@ public class PushButton : UdonSharpBehaviour
         }
     }
 
-    void CheckIfSeqTwoNeedsUpdating() {
-        if (timeToUpdateRenderer == 0f) {
-            return;
-        }
-
-        if (Time.time >= timeToUpdateRenderer) {
-            UpdateSeqOneRenderer();
-            UpdateSeqTwoRenderer();
-            timeToUpdateRenderer = 0f;
-        }
+    public void UpdateRenderers() {
+        Debug.Log("PushButton \"" + this.gameObject.name + "\" updating renderers with  1=" + (isSeqOneOn ? "ON" : "OFF") + "  2=" + (isSeqTwoOn ? "ON" : "OFF") + "");
+        UpdateSeqOneRenderer();
+        UpdateSeqTwoRenderer();
     }
 
     void OnFingerInteract() {
         Debug.Log("PushButton \"" + this.gameObject.name + "\" has been interacted with");
 
-        BecomeOwner();
+        if (!GetIsOwner()) {
+            BecomeOwner();
+        } else {
+            Debug.Log("I am already the owner of \"" + this.gameObject.name + "\"");
+        }
 
         ToggleState();
 
-        if (isSeqOneOn != syncedIsSeqOneOn) {
-            syncedIsSeqOneOn = isSeqOneOn;
-        }
+        syncedIsSeqOneOn = isSeqOneOn;
+        syncedIsSeqTwoOn = isSeqTwoOn;
+        
+        VibrateController();
 
-        if (isSeqTwoOn != syncedIsSeqTwoOn) {
-            syncedIsSeqTwoOn = isSeqTwoOn;
-        }
-
-        needsToPlayAnimation = true;
+        RequestSerialization();
+        
+        TellAllPlayersToPlayAnimation();
     }
 
-    void UpdateVisually() {
-        if (!needsToPlayAnimation) {
-            return;
-        }
+    void TellAllPlayersToPlayAnimation() {
+        SendCustomNetworkEvent(VRC.Udon.Common.Interfaces.NetworkEventTarget.All, "PlayAnimation");
+    }
 
-        needsToPlayAnimation = false;
+    public void PlayAnimation() {
+        Debug.Log("PushButton \"" + this.gameObject.name + "\" playing animation");
 
         if (isPulledOut != true) {
             PlayPushDownAnimation();
@@ -240,7 +234,7 @@ public class PushButton : UdonSharpBehaviour
             PlayPullOutAnimation();
         }
 
-        UpdateRendererAfterDelay();
+        SendCustomEventDelayedSeconds(nameof(UpdateRenderers), 0.3f);
     }
 
     void ToggleState() {
@@ -249,10 +243,6 @@ public class PushButton : UdonSharpBehaviour
         } else {
             isSeqOneOn = !isSeqOneOn;
         }
-    }
-
-    void UpdateRendererAfterDelay() {
-        timeToUpdateRenderer = Time.time + 0.3f;
     }
 
     void UpdateSeqOneRenderer() {
@@ -281,8 +271,6 @@ public class PushButton : UdonSharpBehaviour
             return;
         }
 
-        Debug.Log("Pushing button...");
-
         animator.SetTrigger("PushTheButton");
     }
 
@@ -293,8 +281,6 @@ public class PushButton : UdonSharpBehaviour
             Debug.Log("No animator found");
             return;
         }
-
-        Debug.Log("Pulling button...");
 
         animator.SetTrigger("PullTheButton");
     }
