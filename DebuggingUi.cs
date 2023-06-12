@@ -11,18 +11,21 @@ public class DebuggingUi : AxisInputReceiver
 
     public override void OnStart() {
         text = this.gameObject.GetComponent<Text>();
-        text.text = "Start";
+        text.text = "Waiting";
     }
 
     public override void OnPercent(float percent) {
-        UpdateDisplay(percent);
+        UpdateDisplay("%" + percent);
     }
 
     public override void OnIndex(int index) {
-        Debug.Log("Index: " + index);
+        UpdateDisplay("Idx: " + index);
     }
 
-    void UpdateDisplay(float percent) {
-        text.text = "%" + percent;
+    void UpdateDisplay(string newText) {
+        if (text == null) {
+            return;
+        }
+        text.text = newText;
     }
 }

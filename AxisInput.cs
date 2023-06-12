@@ -6,10 +6,24 @@ using VRC.SDK3.Components;
 using VRC.Udon;
 using VRC.Udon.Common.Interfaces;
 
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+using UnityEditor;
+using UdonSharpEditor;
+#endif
+
 public enum Axis {
     X,
     Y,
     Z
+}
+
+public enum InputTypes {
+    Generic,
+    Knob,
+    Switch,
+    PushButton,
+    ThrottleLever,
+    FlapsLever
 }
 
 public enum AxisInputMethods {
@@ -24,6 +38,7 @@ public class AxisInput : UdonSharpBehaviour
     public Axis pickupAxis;
     // use "pinch" to grab a knob then twist using hand rotation
     public bool useFingerCollision = true;
+    public InputTypes inputType = InputTypes.Generic; 
 
     float rotatorMovementOnAxis;
     [UdonSynced]
@@ -39,12 +54,14 @@ public class AxisInput : UdonSharpBehaviour
 
     public float defaultRotation;
     public float[] targetAngles;
-
     public AxisInputReceiver[] receivers;
 
     public float fromAngle = -1f;
     public float toAngle = -1f;
-    public float offset = 0f;
+    public float visualOffset = 0f;
+    public float snappingOffset = 0f;
+    
+    public Material highlightMaterial;
 
     Vector3 initialPickupPosition;
     Quaternion initialPickupRotation;
@@ -52,7 +69,6 @@ public class AxisInput : UdonSharpBehaviour
     Transform rotator;
     bool isPickingUp = false;
     float maxDegrees;
-    bool needsToSnap = false;
 
     BoxCollider boxCollider;
     SphereCollider sphereCollider;
@@ -60,7 +76,6 @@ public class AxisInput : UdonSharpBehaviour
     float timeBeforeNextCollisionCheck = -1;
     Renderer meshRenderer;
     Material standardMaterial;
-    public Material highlightMaterial;
 
     Vector3 lastKnownPickupPosition;
     Quaternion lastKnownPickupRotation;
@@ -136,6 +151,19 @@ public class AxisInput : UdonSharpBehaviour
         }
     }
 
+#if UNITY_EDITOR && !COMPILER_UDONSHARP
+    [DrawGizmo (GizmoType.Selected | GizmoType.NonSelected)]
+    void OnDrawGizmos() {
+        if (rotator == null) {
+            rotator = this.transform.parent;
+        }
+        Gizmos.color = Color.green;
+        Gizmos.DrawSphere(rotator.position, 0.0025f);
+        Gizmos.color = Color.red;
+        Gizmos.DrawSphere(this.transform.position, 0.0025f);
+    }
+#endif
+
     //////////////
 
     public override void OnDeserialization() {
@@ -168,15 +196,16 @@ public class AxisInput : UdonSharpBehaviour
 
     void InitializePickupTransform() {
         if (inputMethod == AxisInputMethods.Slide) {
-            var positionToUse = 0;
+        // TODO: Work out the trig for the initial position
+            // var positionToUse = 0;
 
-            lastKnownPickupPosition = new Vector3(
-                pickupAxis == Axis.X ? positionToUse : initialPickupPosition.x,
-                pickupAxis == Axis.Y ? positionToUse : initialPickupPosition.y,
-                pickupAxis == Axis.Z ? positionToUse : initialPickupPosition.z
-            );
+            // lastKnownPickupPosition = new Vector3(
+            //     pickupAxis == Axis.X ? positionToUse : initialPickupPosition.x,
+            //     pickupAxis == Axis.Y ? positionToUse : initialPickupPosition.y,
+            //     pickupAxis == Axis.Z ? positionToUse : initialPickupPosition.z
+            // );
 
-            this.transform.position = lastKnownPickupPosition;
+            // this.transform.position = lastKnownPickupPosition;
         } else {
             var rotationToUse = ConvertDegreesOutOf360ToRotationValue(defaultRotation + 90f); //  - 90f
 
@@ -413,21 +442,26 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     float NormalizeUnityRotationValueTo0to360(float unityRotationValue) {
-        // Convert the Euler angle rotation value to be outside of 360 degrees
-float convertedRotation = unityRotationValue % 360f;
+        float convertedRotation = unityRotationValue % 360f;
 
-// If the converted rotation is negative, add 360 to make it positive
-if (convertedRotation < 0f)
-{
-    convertedRotation += 360f;
-}
+        if (convertedRotation < 0f)
+        {
+            convertedRotation += 360f;
+        }
 
-    return convertedRotation;
+        return convertedRotation;
     }
 
     float GetRotatorRotationAsPercentage() {
         var rotatorRotation360 = NormalizeUnityRotationValueTo0to360(rotatorMovementOnAxis);
-        rotatorRotation360 += 180;
+
+        if (inputMethod == AxisInputMethods.Twist) {
+            rotatorRotation360 += 180;
+        } else {
+            rotatorRotation360 -= 135;
+            rotatorRotation360 = NormalizeDegreesTo0to360(rotatorRotation360);
+        }
+
         return DegreesToPercentage(rotatorRotation360, fromAngle, toAngle);
     }
 
@@ -436,7 +470,6 @@ if (convertedRotation < 0f)
             return;
         }
 
-        // knobs
         if (inputMethod == AxisInputMethods.Twist) {
             rotator.rotation = Quaternion.Euler(
                 rotatorAxis == Axis.X ? rotatorMovementOnAxis : initialRotatorRotation.eulerAngles.x,
@@ -446,22 +479,19 @@ if (convertedRotation < 0f)
             return;
         }
 
-        Vector3 direction = this.transform.position - rotator.position;
-
-        float angle = Mathf.Atan2(direction.y, direction.z) * Mathf.Rad2Deg;
-
-        angle = angle + offset;
-
-        angle = angle * -1;
-
-        // Quaternion rotation = Quaternion.Euler(angle, 0f, 0f);
-        Quaternion rotation = Quaternion.Euler(
-            rotatorAxis == Axis.X ? angle : initialRotatorRotation.eulerAngles.x,
-            rotatorAxis == Axis.Y ? angle : initialRotatorRotation.eulerAngles.y,
-            rotatorAxis == Axis.Z ? angle : initialRotatorRotation.eulerAngles.z
-        );
-
-        rotator.rotation = rotation;
+        if (inputType == InputTypes.ThrottleLever || inputType == InputTypes.Switch) {
+            rotator.rotation = Quaternion.Euler(
+                rotatorAxis == Axis.X ? rotatorMovementOnAxis * -1 : initialRotatorRotation.eulerAngles.x,
+                rotatorAxis == Axis.Y ? rotatorMovementOnAxis * -1 : initialRotatorRotation.eulerAngles.y,
+                rotatorAxis == Axis.Z ? rotatorMovementOnAxis * -1 : initialRotatorRotation.eulerAngles.z
+            );
+        } else {
+            rotator.rotation = Quaternion.Euler(
+                rotatorAxis == Axis.X ? rotatorMovementOnAxis : initialRotatorRotation.eulerAngles.x,
+                rotatorAxis == Axis.Y ? rotatorMovementOnAxis : initialRotatorRotation.eulerAngles.y,
+                rotatorAxis == Axis.Z ? rotatorMovementOnAxis : initialRotatorRotation.eulerAngles.z
+            );
+        }
     }
 
     float GetRotatorRotationOnAxis() {
@@ -469,7 +499,7 @@ if (convertedRotation < 0f)
             return 0f;
         }
 
-        var currentRotationValue360 = GetPickupRotationAsDegreesOf360();
+        var currentRotationValue360 = GetPickupMovementAsDegreesOf360();
 
         if (GetNeedsSnapping()) {
             float firstTargetAngle = targetAngles[0];
@@ -477,27 +507,33 @@ if (convertedRotation < 0f)
 
             var clampedDegrees360 = ClampDegrees(currentRotationValue360, firstTargetAngle, lastTargetAngle);
 
-            var nearestAngleInverted = inputMethod == AxisInputMethods.Twist ? clampedDegrees360 : clampedDegrees360 * -1;
-            // var nearestAngleInverted = clampedDegrees360 * -1;
-            var nearestAngleWithOffset = ConvertToPositiveDegrees(nearestAngleInverted + offset);
+            var nearestAngleWithOffset = (
+                inputMethod == AxisInputMethods.Twist ? 
+                    clampedDegrees360 :
+                inputType == InputTypes.FlapsLever ? 
+                    clampedDegrees360 - 90f : 
+                clampedDegrees360
+            );
+            nearestAngleWithOffset += visualOffset;
+            var nearestAnglePositiveDegrees = ConvertToPositiveDegrees(nearestAngleWithOffset);
 
-            var newRotationOnAxis = ConvertDegreesOutOf360ToRotationValue(nearestAngleWithOffset);
+            var newRotationOnAxis = ConvertDegreesOutOf360ToRotationValue(nearestAnglePositiveDegrees);
 
             // if (inputMethod == AxisInputMethods.Twist) {
             //     newRotationOnAxis = newRotationOnAxis * -1;
             // }
             
-            // Debug.Log("Rotator Snapped " + currentRotationValue360 + "d -> (between " + firstTargetAngle + "d and " + lastTargetAngle + "d) -> " + clampedDegrees360 + "d -> " + newRotationOnAxis + "d");
+            Debug.Log("Rotator Snapped  " + currentRotationValue360 + "d -> (between " + firstTargetAngle + "d and " + lastTargetAngle + "d) -> " + clampedDegrees360 + "d -> " + newRotationOnAxis + "d");
 
             return newRotationOnAxis;
         } else {
             var clampedDegrees360 = (fromAngle != -1 && toAngle != -1 ? ClampDegrees(currentRotationValue360, fromAngle, toAngle) : currentRotationValue360);
 
-            var degreesWithOffset = ConvertToPositiveDegrees(clampedDegrees360 + 180f);
+            var degreesWithOffset = ConvertToPositiveDegrees(clampedDegrees360 + (inputMethod == AxisInputMethods.Twist ? 180f : 135f));
 
             var newRotationOnAxis = ConvertDegreesOutOf360ToRotationValue(degreesWithOffset);
 
-            // Debug.Log("Rotator " + currentRotationValue360 + "d -> (between " + fromAngle + "d and " + toAngle + "d) -> " + clampedDegrees360 + "d -> " + newRotationOnAxis + "d");
+            Debug.Log("Rotator Unsnapped  " + currentRotationValue360 + "d -> (between " + fromAngle + "d and " + toAngle + "d) -> Clamp " + clampedDegrees360 + "d -> Actual " + newRotationOnAxis + "d");
 
             return newRotationOnAxis;
         }
@@ -545,20 +581,21 @@ if (convertedRotation < 0f)
     }
 
     float DegreesToPercentage(float degrees, float fromAngle, float toAngle) {
-        float difference = (fromAngle > toAngle ? fromAngle - toAngle : toAngle - fromAngle); // 225 - 135 = 90
-        float totalDegrees = 360 - difference; // 360 - 90 = 270
+        // degrees = 120
+        float difference = (fromAngle > toAngle ? fromAngle - toAngle : toAngle - fromAngle); // 315 - 45 = 270
+        float totalDegrees = 360 - difference; // 360 - 270 = 90
 
-        float newDegrees = degrees + (fromAngle > toAngle ? toAngle : fromAngle); // 0 + 135 = 135 
+        float newDegrees = degrees + (fromAngle > toAngle ? toAngle : fromAngle); // 120 + 45 = 165
 
         // if (newDegrees > 360) {
         //     newDegrees = newDegrees - 360;
 		// }
 
-        newDegrees = ConvertToPositiveDegrees(newDegrees); // 135
+        newDegrees = ConvertToPositiveDegrees(newDegrees); // 165
 
-        float percent = newDegrees / totalDegrees * 100; // 135 / 270 * 100 = 50%
+        float percent = newDegrees / totalDegrees * 100; // 165 / 90 * 100
 
-        Debug.Log("DEG  " + degrees + "  from:" + fromAngle + " to:" + toAngle + "  ->  %" + percent);
+        // Debug.Log("DEG  " + degrees + "  from:" + fromAngle + " to:" + toAngle + "  ->  %" + percent);
 
         return percent;
     }
@@ -580,7 +617,7 @@ if (convertedRotation < 0f)
         }
     }
 
-    float GetPickupRotationAsDegreesOf360() {
+    float GetPickupMovementAsDegreesOf360() {
         // knobs
         if (inputMethod == AxisInputMethods.Twist) {
             var currentRotationValue = this.transform.rotation.eulerAngles[(int)pickupAxis];
@@ -592,31 +629,12 @@ if (convertedRotation < 0f)
             return currentRotationValueOf360;
         }
 
-        // WARNING: The OnDrop clamping mechanism INVERTS the angle it is snapped to
-        // ie. when lever is dropped lower it snaps to the HIGHER angle but visually is lower
-        // if (isVertical) {
-        //     Vector3 direction1 = rotator.position - this.transform.position;
-
-        //     Quaternion targetRotation = Quaternion.LookRotation(direction1, Vector3.back);
-        //     var angle1 = targetRotation.eulerAngles.z;
-        //     var offset1= 0;
-
-        //     // NOTE: always seems to be a tiiiiny bit different
-        //     if (this.transform.position.x < rotator.position.x) {
-        //         angle1 = -angle1;
-        //     }
-
-        //     var angleWithin3601 = ConvertToPositiveDegrees(angle1 - offset1);
-
-        //     return angleWithin3601;
-        // }
-
         Vector3 direction = this.transform.position - rotator.position;
 
         // NOTE: always between 0-180 degrees
         float angle = Vector3.Angle(Vector3.back, direction);
 
-        // Debug.Log("GetPickupRotationAsDegreesOf360 direction=" + direction + " angle=" + angle + "d");
+        // Debug.Log("GetPickupMovementAsDegreesOf360 direction=" + direction + " angle=" + angle + "d");
 
         // NOTE: always seems to be a tiiiiny bit different
         if (this.transform.position.x < rotator.position.x) {
@@ -629,14 +647,14 @@ if (convertedRotation < 0f)
             angle = angle - 360f;
         }
 
-        var offset = 270f;
+        var offset = inputType == InputTypes.ThrottleLever ? 90f : inputType == InputTypes.FlapsLever ? 90f : 0;
         var angleWithin360 = (angle - offset + 360) % 360;
 
         return angleWithin360;
     }
 
     float GetSnappedRotatorRotationOnAxis(float overrideCurrentRotationOf360 = -1f) {
-        float desiredRotation360 = overrideCurrentRotationOf360 != -1 ? overrideCurrentRotationOf360 : GetPickupRotationAsDegreesOf360();
+        float desiredRotation360 = overrideCurrentRotationOf360 != -1 ? overrideCurrentRotationOf360 : GetPickupMovementAsDegreesOf360();
 
         float nearestAngle = FindNearestAngle(desiredRotation360);
         int indexOfNearestAngle = FindNearestAngleIndex(desiredRotation360);
@@ -647,13 +665,20 @@ if (convertedRotation < 0f)
             NotifyReceiversOfIndex(selectedIndex);
         }
 
-        var nearestAngleInverted = inputMethod == AxisInputMethods.Twist ? nearestAngle + 180f : nearestAngle * -1;
-        var nearestAngleInvertedWithOffset = nearestAngleInverted;
-        var nearestAngleWithOffset = ConvertToPositiveDegrees(nearestAngleInvertedWithOffset);
+        var nearestAngleWithOffset = (
+            inputMethod == AxisInputMethods.Twist ? 
+                nearestAngle + 180f : 
+            inputType == InputTypes.ThrottleLever ? 
+                nearestAngle * -1 : 
+            inputType == InputTypes.FlapsLever ?
+                nearestAngle - 90f :
+            nearestAngle);
+        nearestAngleWithOffset += snappingOffset;
+        var nearestAnglePositiveDegrees = ConvertToPositiveDegrees(nearestAngleWithOffset);
         
-        var rotatorRotation = ConvertDegreesOutOf360ToRotationValue(nearestAngleWithOffset);
+        var rotatorRotation = ConvertDegreesOutOf360ToRotationValue(nearestAnglePositiveDegrees);
 
-        Debug.Log("Snapped lever " + GetDisplayName() + " from " + desiredRotation360 + "d -> " + rotatorRotation + "d -> " + nearestAngleWithOffset + "d [index " + indexOfNearestAngle.ToString() + ", " + nearestAngle.ToString() + "d]");
+        Debug.Log("Snapped lever " + GetDisplayName() + " from " + desiredRotation360 + "d -> " + nearestAngleWithOffset + "d -> " + rotatorRotation + "d  [index " + indexOfNearestAngle.ToString() + ", " + nearestAngle.ToString() + "d]");
     
         return rotatorRotation;
     }

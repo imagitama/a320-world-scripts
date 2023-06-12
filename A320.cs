@@ -54,7 +54,7 @@ public class A320 : UdonSharpBehaviour
     }
 
 #if UNITY_EDITOR && !COMPILER_UDONSHARP
-[DrawGizmo (GizmoType.Selected | GizmoType.NonSelected)]
+    [DrawGizmo (GizmoType.Selected | GizmoType.NonSelected)]
     void OnDrawGizmos() {
         if (fakeHand == null) {
             fakeHand = GameObject.Find("/FakeHand").transform;
@@ -63,10 +63,9 @@ public class A320 : UdonSharpBehaviour
             fakeFinger = fakeHand.Find("Index/IndexDistal");
         }
 
-        Gizmos.color = Color.green;
+        Gizmos.color = Color.yellow;
         Gizmos.DrawSphere(GetHandPosition(), 0.0025f);
         Gizmos.color = Color.yellow;
-        // Gizmos.DrawSphere(GetIndexFingerPosition(), 0.0025f);
         Gizmos.DrawSphere(GetIndexFingerTipPosition(), 0.0025f);
     }
 #endif
