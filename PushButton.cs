@@ -5,6 +5,7 @@ using VRC.SDKBase;
 using VRC.Udon;
 using VRC.Udon.Common.Interfaces;
 
+[UdonBehaviourSyncMode(BehaviourSyncMode.Manual)]
 public class PushButton : UdonSharpBehaviour
 {
     public bool isSeqOneOn = false;
@@ -57,14 +58,27 @@ public class PushButton : UdonSharpBehaviour
         #if UNITY_EDITOR
         fakeFinger = GameObject.Find("/FakeHand/Index/IndexDistal").transform;
         #endif
+
+        BeginUpdateLoop();
+        BeginSyncingVars();
     }
 
-    void Update() {
-        CheckIfSeqTwoNeedsUpdating();
+    public void BeginUpdateLoop() {
+        CustomUpdate();
+        SendCustomEventDelayedFrames(nameof(BeginUpdateLoop), 5);
+    }
 
-        DetectFingerPress();
+    public void BeginSyncingVars() {
+        SyncUdonVarsIfNecessary();
+        SendCustomEventDelayedFrames(nameof(BeginUpdateLoop), 15);
+    }
+
+    void CustomUpdate() {
+        CheckIfSeqTwoNeedsUpdating();
         
         UpdateVisually();
+
+        DetectFingerPress();
     }
 
     //////////////
@@ -88,6 +102,16 @@ public class PushButton : UdonSharpBehaviour
 
     //////////////
 
+    void SyncUdonVarsIfNecessary() {
+        if (!GetIsOwner()) {
+            return;
+        }
+
+        if (syncedIsSeqOneOn != isSeqOneOn || syncedIsSeqTwoOn != isSeqTwoOn) {
+            RequestSerialization();
+        }
+    }
+
     // Networking.IsOwner is laggy
     bool GetIsOwner() {
         if (isOwner == null) {
@@ -100,18 +124,47 @@ public class PushButton : UdonSharpBehaviour
         Networking.SetOwner(Networking.LocalPlayer, this.gameObject);
     }
 
-    Vector3 GetIndexFingerPosition() {
-        #if UNITY_EDITOR
+    Vector3 GetIndexFingerTipPosition() {
+        // TODO: Calculate the finger tip somehow
+
+#if UNITY_EDITOR
         return fakeFinger.position;
         #else
-        return Networking.LocalPlayer.GetBonePosition(HumanBodyBones.RightIndexDistal);
-        #endif
+        if (Networking.LocalPlayer == null) {
+            return Vector3.zero;
+        }
+
+        var bonePosition = Networking.LocalPlayer.GetBonePosition(HumanBodyBones.RightIndexDistal);
+
+        if (bonePosition == Vector3.zero) {
+            bonePosition = Networking.LocalPlayer.GetBonePosition(HumanBodyBones.RightIndexIntermediate);
+
+            if (bonePosition == Vector3.zero) {
+                bonePosition = Networking.LocalPlayer.GetBonePosition(HumanBodyBones.RightIndexProximal);
+
+                if (bonePosition == Vector3.zero) {
+                    return GetHandPosition();
+                }
+            }
+        }
+
+        return bonePosition;
+#endif
+    }
+
+    Vector3 GetHandPosition() {
+        if (Networking.LocalPlayer == null) {
+            return Vector3.zero;
+        }
+
+        var trackingData = Networking.LocalPlayer.GetTrackingData(VRC.SDKBase.VRCPlayerApi.TrackingDataType.RightHand);
+        return trackingData.position;
     }
 
     bool GetIsIndexFingerInsideCollider() {
         Bounds colliderBounds = boxCollider.bounds;
 
-        var indexFingerPosition = GetIndexFingerPosition();
+        var indexFingerPosition = GetIndexFingerTipPosition();
 
         bool isInside = colliderBounds.Contains(indexFingerPosition);
 
@@ -163,8 +216,13 @@ public class PushButton : UdonSharpBehaviour
 
         ToggleState();
 
-        syncedIsSeqOneOn = isSeqOneOn;
-        syncedIsSeqTwoOn = isSeqTwoOn;
+        if (isSeqOneOn != syncedIsSeqOneOn) {
+            syncedIsSeqOneOn = isSeqOneOn;
+        }
+
+        if (isSeqTwoOn != syncedIsSeqTwoOn) {
+            syncedIsSeqTwoOn = isSeqTwoOn;
+        }
 
         needsToPlayAnimation = true;
     }

@@ -27,13 +27,13 @@ public class A320 : UdonSharpBehaviour
 #endif
     }
 
-    void Update() {
-        if (!isDebuggingEnabled) {
-            return;
-        }
+    // void Update() {
+    //     if (!isDebuggingEnabled) {
+    //         return;
+    //     }
 
-        MoveDebugBallsToHand();
-    }
+    //     MoveDebugBallsToHand();
+    // }
 
     void MoveDebugBallsToHand() {
         if (handPositionBall == null) {
@@ -87,6 +87,9 @@ public class A320 : UdonSharpBehaviour
         #if UNITY_EDITOR
         return fakeHand.position;
         #else
+        if (Networking.LocalPlayer == null) {
+            return Vector3.zero;
+        }
         var trackingData = Networking.LocalPlayer.GetTrackingData(VRC.SDKBase.VRCPlayerApi.TrackingDataType.RightHand);
         return trackingData.position;
         #endif
