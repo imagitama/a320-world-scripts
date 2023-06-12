@@ -191,6 +191,12 @@ public class AxisInput : UdonSharpBehaviour
     public override void OnDeserialization() {
         rotatorMovementOnAxis = syncedRotatorMovementOnAxis;
         pickupMovementOnAxis = syncedPickupMovementOnAxis;
+
+        if (syncedSelectedIndex != selectedIndex) {
+            NotifyReceiversOfIndex(selectedIndex);
+        }
+
+        selectedIndex = syncedSelectedIndex;
     }
 
     public override void InputGrab(bool value, VRC.Udon.Common.UdonInputEventArgs args) {
@@ -724,6 +730,7 @@ public class AxisInput : UdonSharpBehaviour
             selectedIndex = indexOfNearestAngle;
             syncedSelectedIndex = selectedIndex;
             NotifyReceiversOfIndex(selectedIndex);
+            SyncVarsToOtherPlayers();
         }
 
         var nearestAngleWithOffset = (

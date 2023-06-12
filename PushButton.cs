@@ -55,22 +55,23 @@ public class PushButton : UdonSharpBehaviour
         fakeFinger = GameObject.Find("/FakeHand/Index/IndexDistal").transform;
         #endif
 
-        BeginUpdateLoop();
+        BeginDetectingFingerPress();
     }
 
-    public void BeginUpdateLoop() {
-        CustomUpdate();
-        SendCustomEventDelayedFrames(nameof(BeginUpdateLoop), 5);
-    }
-
-    void CustomUpdate() {
+    public void BeginDetectingFingerPress() {
         DetectFingerPress();
+        SendCustomEventDelayedFrames(nameof(BeginDetectingFingerPress), 5);
     }
 
     //////////////
 
     public override void OnPlayerJoined(VRCPlayerApi newPlayer) {
         SyncVarsToOtherPlayers();
+
+        if (newPlayer.playerId == Networking.LocalPlayer.playerId) {
+            Debug.Log("I joined! Updating renderers...");
+            UpdateRenderers();
+        }
     }
 
     public override void OnOwnershipTransferred(VRCPlayerApi newOwner) {
