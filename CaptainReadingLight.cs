@@ -7,12 +7,18 @@ using VRC.Udon;
 public class CaptainReadingLight : AxisInputReceiver
 {
     Light light;
+    float lastPercent;
 
     public override void OnStart() {
         light = this.gameObject.GetComponent<Light>();
+
+        if (lastPercent != null) {
+            OnPercent(lastPercent);
+        }
     }
 
     public override void OnPercent(float percentOutOf100) {
+        lastPercent = percentOutOf100;
         UpdateLightWithPercent(percentOutOf100);
     }
 
@@ -27,6 +33,6 @@ public class CaptainReadingLight : AxisInputReceiver
 
         light.intensity = newIntensity;
 
-        Debug.Log("UpdateLightWithPercent %" + percentOutOf100 + " => " + newIntensity);
+        Debug.Log("CaptainReadingLight %" + percentOutOf100 + " => " + newIntensity);
     }
 }

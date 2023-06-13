@@ -69,7 +69,6 @@ public class PushButton : UdonSharpBehaviour
         SyncVarsToOtherPlayers();
 
         if (newPlayer.playerId == Networking.LocalPlayer.playerId) {
-            Debug.Log("I joined! Updating renderers...");
             UpdateRenderers();
         }
     }

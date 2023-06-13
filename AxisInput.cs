@@ -17,10 +17,12 @@ public enum Axis {
     Z
 }
 
+// WARNING: adding a new value here will screw up all preceding components
 public enum InputTypes {
     Generic,
     Knob,
     Switch,
+    OverheadSwitch,
     PushButton,
     ThrottleLever,
     FlapsLever,
@@ -122,8 +124,6 @@ public class AxisInput : UdonSharpBehaviour
         standardMaterial = meshRenderer.material;
         
         BeginUpdateLoop();
-
-
         
         // SendCustomEventDelayedSeconds(nameof(BeginTestLoop), 5);
     }
@@ -143,12 +143,13 @@ public class AxisInput : UdonSharpBehaviour
 
             pickupMovementOnAxis = (inputMethod == AxisInputMethods.Slide ? this.transform.position[(int)pickupAxis] : this.transform.rotation[(int)pickupAxis]);
             
-            var needToSync = (pickupMovementOnAxis != syncedPickupMovementOnAxis || rotatorMovementOnAxis != syncedRotatorMovementOnAxis);
+            var hasChanged = (pickupMovementOnAxis != syncedPickupMovementOnAxis || rotatorMovementOnAxis != syncedRotatorMovementOnAxis);
             
             syncedRotatorMovementOnAxis = rotatorMovementOnAxis;
             syncedPickupMovementOnAxis = pickupMovementOnAxis;
 
-            if (needToSync) {
+            if (hasChanged) {
+                HandlePercentages();
                 SyncVarsToOtherPlayers();
             }
         } else {
@@ -156,24 +157,135 @@ public class AxisInput : UdonSharpBehaviour
         }
         
         MoveRotatorVisibly();
-
-        if (!GetNeedsSnapping()) {
-            HandlePercentages();
-        }
         
         DetectHandHover();
     }
 
 #if UNITY_EDITOR && !COMPILER_UDONSHARP
-    [DrawGizmo (GizmoType.Selected | GizmoType.NonSelected)]
-    void OnDrawGizmos() {
-        if (rotator == null) {
-            rotator = this.transform.parent;
-        }
+    // [DrawGizmo (GizmoType.Selected)] // GizmoType.NonSelected
+    void OnDrawGizmosSelected() {
         Gizmos.color = Color.green;
-        Gizmos.DrawSphere(rotator.position, 0.0025f);
-        Gizmos.color = Color.red;
+        Gizmos.DrawSphere(this.transform.parent.position, 0.0025f);
+        Gizmos.color = Color.green;
         Gizmos.DrawSphere(this.transform.position, 0.0025f);
+
+        DrawRadius();
+        DrawAngleGizmos();
+    }
+
+    void DrawRadius() {
+        Gizmos.color = Color.green;
+        var radius = inputMethod == AxisInputMethods.Slide ? Vector3.Distance(this.transform.parent.position, this.transform.position) : 0.02f;
+
+        Vector3 position = this.transform.parent.position;
+        Vector3 previousPoint = Vector3.zero;
+        Vector3 firstPoint = Vector3.zero;
+        float circumference = 2f * Mathf.PI * radius;
+        int numSegments = 180;
+        float angleStep = 360f / numSegments;
+
+        for (int i = 0; i <= numSegments; i++) {
+            float angle = i * angleStep;
+
+            float x = 0;
+            float y = 0;
+            float z = 0;
+
+            var axisToUse = inputMethod == AxisInputMethods.Slide ? rotatorAxis : pickupAxis;
+
+            switch (axisToUse) {
+                case Axis.X:
+                    x = position.x;
+                    y = position.y + radius * Mathf.Cos(angle * Mathf.Deg2Rad);
+                    z = position.z + radius * Mathf.Sin(angle * Mathf.Deg2Rad);
+                    break;
+                case Axis.Y:
+                    x = position.x + radius * Mathf.Cos(angle * Mathf.Deg2Rad);
+                    y = position.y;
+                    z = position.z + radius * Mathf.Sin(angle * Mathf.Deg2Rad);
+                    break;
+                case Axis.Z:
+                    x = position.x + radius * Mathf.Cos(angle * Mathf.Deg2Rad);
+                    y = position.y + radius * Mathf.Sin(angle * Mathf.Deg2Rad);
+                    z = position.z;
+                    break;
+            }
+
+            Vector3 currentPoint = new Vector3(x, y, z);
+
+            if (i > 0)
+            {
+                Gizmos.DrawLine(previousPoint, currentPoint);
+            }
+            else
+            {
+                firstPoint = currentPoint;
+            }
+
+            previousPoint = currentPoint;
+        }
+
+        Gizmos.DrawLine(previousPoint, firstPoint);
+    }
+
+    void DrawAngleGizmos() {
+        var radius = inputMethod == AxisInputMethods.Slide ? Vector3.Distance(this.transform.parent.position, this.transform.position) : 0.02f;
+        Vector3 startPoint = this.transform.parent.position;
+
+        var colorsByAngle = new System.Collections.Generic.Dictionary<Color, float>();
+        colorsByAngle.Add(Color.white, 0f);
+        colorsByAngle.Add(new Color(1, 0, 1, 1), defaultRotation);
+
+        if (fromAngle != -1) {
+            colorsByAngle.Add(Color.yellow, (fromAngle + (inputMethod == AxisInputMethods.Twist ? -90f : 0)));
+        }
+        if (toAngle != -1) {
+            colorsByAngle.Add(Color.red, (toAngle + (inputMethod == AxisInputMethods.Twist ? -90f : 0)));
+        }
+
+        for (var i = 0; i < targetAngles.Length; i++) {
+            var targetAngle = targetAngles[i] + snappingOffset;
+            colorsByAngle.Add(new Color(1, 0.2f + ((float)i / 10), 0.5f), targetAngle);
+        }
+
+        colorsByAngle.Add(Color.green, rotatorMovementOnAxis);
+
+        foreach (System.Collections.Generic.KeyValuePair<Color, float> entry in colorsByAngle) {
+            Vector3 endPoint = GetLineEndPoint(startPoint, entry.Value, radius);
+
+            Gizmos.color = entry.Key;
+            Gizmos.DrawLine(startPoint, endPoint);
+        }
+    }
+
+    Vector3 GetLineEndPoint(Vector3 startPoint, float angle, float distance) {
+        float angleInRadians = angle * Mathf.Deg2Rad;
+
+        float x = 0;
+        float y = 0;
+        float z = 0;
+
+        var axisToUse = inputMethod == AxisInputMethods.Slide ? rotatorAxis : pickupAxis;
+
+        switch (axisToUse) {
+            case Axis.X:
+                x = startPoint.x;
+                y = startPoint.y + distance * Mathf.Cos(angleInRadians);
+                z = startPoint.z + distance * Mathf.Sin(angleInRadians);
+                break;
+            case Axis.Y:
+                x = startPoint.x + distance * Mathf.Cos(angleInRadians);
+                y = startPoint.y;
+                z = startPoint.z + distance * Mathf.Sin(angleInRadians);
+                break;
+            case Axis.Z:
+                x = startPoint.x + distance * Mathf.Cos(angleInRadians);
+                y = startPoint.y + distance * Mathf.Sin(angleInRadians);
+                z = startPoint.z;
+                break;
+        }
+
+        return new Vector3(x, y, z);
     }
 #endif
 
@@ -191,6 +303,8 @@ public class AxisInput : UdonSharpBehaviour
     public override void OnDeserialization() {
         rotatorMovementOnAxis = syncedRotatorMovementOnAxis;
         pickupMovementOnAxis = syncedPickupMovementOnAxis;
+
+        HandlePercentages();
 
         if (syncedSelectedIndex != selectedIndex) {
             NotifyReceiversOfIndex(selectedIndex);
@@ -228,16 +342,47 @@ public class AxisInput : UdonSharpBehaviour
 
     void InitializePickupTransform() {
         if (inputMethod == AxisInputMethods.Slide) {
-        // TODO: Work out the trig for the initial position
-            // var positionToUse = 0;
+            // TODO: Consolidate this into a single thing
+            
+            if (inputType == InputTypes.ThrottleLever) {
+                var rotationToUse = ConvertDegreesOutOf360ToRotationValue(defaultRotation + defaultRotationOffset);
+  
+                // TODO: Calculate this?
+                var distance = 0.1f;
 
-            // lastKnownPickupPosition = new Vector3(
-            //     pickupAxis == Axis.X ? positionToUse : initialPickupPosition.x,
-            //     pickupAxis == Axis.Y ? positionToUse : initialPickupPosition.y,
-            //     pickupAxis == Axis.Z ? positionToUse : initialPickupPosition.z
-            // );
+                Vector3 offset = Quaternion.Euler(rotationToUse, 0f, 0f) * Vector3.forward * distance;
 
-            // this.transform.position = lastKnownPickupPosition;
+                var pos = rotator.transform.position + offset;
+                var positionToUse = pos[(int)pickupAxis];
+
+                lastKnownPickupPosition = new Vector3(
+                    pickupAxis == Axis.X ? positionToUse : initialPickupPosition.x,
+                    pickupAxis == Axis.Y ? positionToUse : initialPickupPosition.y,
+                    pickupAxis == Axis.Z ? positionToUse : initialPickupPosition.z
+                );
+
+                this.transform.position = lastKnownPickupPosition;
+            } else if (inputType == InputTypes.GearLever) {
+                var rotationToUse = ConvertDegreesOutOf360ToRotationValue(defaultRotation + defaultRotationOffset);
+  
+                // TODO: Calculate this?
+                var distance = 0.25f;
+
+                Vector3 offset = Quaternion.Euler(rotationToUse, 0f, 0f) * Vector3.forward * distance;
+
+                var pos = rotator.transform.position + offset;
+                var positionToUse = pos[(int)pickupAxis];
+
+                lastKnownPickupPosition = new Vector3(
+                    pickupAxis == Axis.X ? positionToUse : initialPickupPosition.x,
+                    pickupAxis == Axis.Y ? positionToUse : initialPickupPosition.y,
+                    pickupAxis == Axis.Z ? positionToUse : initialPickupPosition.z
+                );
+
+                this.transform.position = lastKnownPickupPosition;
+            } else {
+                // TODO: Handle other kinds
+            }
         } else {
             var rotationToUse = ConvertDegreesOutOf360ToRotationValue(defaultRotation + defaultRotationOffset);
 
@@ -459,21 +604,29 @@ public class AxisInput : UdonSharpBehaviour
 
         VibrateController();
 
-        meshRenderer.material = highlightMaterial;
+        HighlightObject();
     }
 
     void VibrateController() {
         Networking.LocalPlayer.PlayHapticEventInHand(VRC.SDK3.Components.VRCPickup.PickupHand.Right, 1f, 1f, 1f);
     }
 
-    void SwitchToStandardMaterial() {
+    void HighlightObject() {
+        meshRenderer.material = highlightMaterial;
+
+        meshRenderer.material.renderQueue = 5000;
+    }
+
+    void UnhighlightObject() {
         meshRenderer.material = standardMaterial;
+        
+        meshRenderer.material.renderQueue = 2000; // standard
     }
 
     void OnHandLeave() {
         Debug.Log("AxisInput \"" + GetDisplayName() + "\" hand leave");
 
-        SwitchToStandardMaterial();
+        UnhighlightObject();
     }
 
     void OnCustomPickup() {
@@ -483,7 +636,7 @@ public class AxisInput : UdonSharpBehaviour
 
         BecomeOwner();
 
-        SwitchToStandardMaterial();
+        UnhighlightObject();
     }
 
     void OnCustomDrop() {
@@ -507,8 +660,7 @@ public class AxisInput : UdonSharpBehaviour
 
         var newPercent = GetRotatorRotationAsPercentage();
 
-        if (newPercent != lastKnownPercent) {
-            Debug.Log("AxisInput \"" + GetDisplayName() + "\" percent %" + newPercent);
+        if (lastKnownPercent == null || newPercent != lastKnownPercent) {
             NotifyReceiversOfPercentage(newPercent);
             lastKnownPercent = newPercent;
         }
@@ -517,8 +669,7 @@ public class AxisInput : UdonSharpBehaviour
     float NormalizeUnityRotationValueTo0to360(float unityRotationValue) {
         float convertedRotation = unityRotationValue % 360f;
 
-        if (convertedRotation < 0f)
-        {
+        if (convertedRotation < 0f) {
             convertedRotation += 360f;
         }
 
@@ -535,7 +686,12 @@ public class AxisInput : UdonSharpBehaviour
                 rotatorRotation360 = 360 - rotatorRotation360;
             }
         } else {
-            rotatorRotation360 -= 135;
+            if (inputType == InputTypes.ThrottleLever) {
+                rotatorRotation360 -= visualOffset;
+            } else {
+                // TODO: Verify this is the flaps/gear/speedbrake
+                rotatorRotation360 -= 135;
+            }
         }
         
         rotatorRotation360 = NormalizeDegreesTo0to360(rotatorRotation360);
@@ -557,7 +713,7 @@ public class AxisInput : UdonSharpBehaviour
             return;
         }
 
-        if (inputType == InputTypes.ThrottleLever || inputType == InputTypes.Switch) {
+        if (inputType == InputTypes.ThrottleLever || inputType == InputTypes.Switch || inputType == InputTypes.OverheadSwitch) {
             rotator.rotation = Quaternion.Euler(
                 rotatorAxis == Axis.X ? rotatorMovementOnAxis * -1 : initialRotatorRotation.eulerAngles.x,
                 rotatorAxis == Axis.Y ? rotatorMovementOnAxis * -1 : initialRotatorRotation.eulerAngles.y,
@@ -597,13 +753,15 @@ public class AxisInput : UdonSharpBehaviour
 
             var newRotationOnAxis = ConvertDegreesOutOf360ToRotationValue(nearestAnglePositiveDegrees);
             
-            // Debug.Log("Rotator Snapped  " + currentRotationValue360 + "d -> (between " + firstTargetAngle + "d and " + lastTargetAngle + "d) -> " + clampedDegrees360 + "d -> " + newRotationOnAxis + "d");
+            if (GetDisplayName() == "SWITCH_OVHD_EXTLT_STROBE.004") {
+                Debug.Log("Rotator Snapped  " + currentRotationValue360 + "d -> (between " + firstTargetAngle + "d and " + lastTargetAngle + "d) -> " + clampedDegrees360 + "d -> " + newRotationOnAxis + "d");
+            }
 
             return newRotationOnAxis;
         } else {
             var clampedDegrees360 = (fromAngle != -1 && toAngle != -1 ? ClampDegrees(currentRotationValue360, fromAngle, toAngle) : currentRotationValue360);
 
-            var degreesWithOffset = ConvertToPositiveDegrees(clampedDegrees360 + (inputMethod == AxisInputMethods.Twist ? 180f : 135f));
+            var degreesWithOffset = ConvertToPositiveDegrees(clampedDegrees360 + (inputMethod == AxisInputMethods.Twist ? 180f : inputType == InputTypes.ThrottleLever ? visualOffset : 135f));
 
             var newRotationOnAxis = ConvertDegreesOutOf360ToRotationValue(degreesWithOffset);
 
@@ -656,14 +814,23 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     float DegreesToPercentage(float degrees, float fromAngle, float toAngle) {
-        float difference = (fromAngle > toAngle ? fromAngle - toAngle : toAngle - fromAngle); // 315 - 45 = 270
-        float totalDegrees = 360 - difference; // 360 - 270 = 90
+        // 343, from=311, to=15
 
-        float newDegrees = degrees + (fromAngle > toAngle ? toAngle : fromAngle); // 120 + 45 = 165
+        // 311 > 15 TRUE then diff=311-15 = 296
+        float difference = (fromAngle > toAngle ? fromAngle - toAngle : toAngle - fromAngle);
+        // 360 - 296 = 64
+        float totalDegrees = 360 - difference;
 
-        newDegrees = ConvertToPositiveDegrees(newDegrees); // 165
+        // 343 - 311 = 32
+        float newDegrees = fromAngle > toAngle ? (degrees - fromAngle) : (degrees + fromAngle);
 
-        float percent = newDegrees / totalDegrees * 100; // 165 / 90 * 100
+        // 32
+        newDegrees = ConvertToPositiveDegrees(newDegrees);
+
+        // 32 / 64 * 100
+        float percent = newDegrees / totalDegrees * 100;
+
+        // Debug.Log("DegreesToPercentage  " + degrees + "d  from " + fromAngle + "d -> " + toAngle + "d  result  %" + percent);
 
         return percent;
     }
@@ -714,7 +881,15 @@ public class AxisInput : UdonSharpBehaviour
             angle = angle - 360f;
         }
 
-        var offset = inputType == InputTypes.ThrottleLever ? 90f : inputType == InputTypes.FlapsLever ? 90f : 0;
+        var offset = (
+            inputType == InputTypes.ThrottleLever ? 
+                90f : 
+            inputType == InputTypes.FlapsLever ? 
+                90f : 
+            inputType == InputTypes.OverheadSwitch ? 
+                270f : 
+            0
+        );
         var angleWithin360 = (angle - offset + 360) % 360;
 
         return angleWithin360;
