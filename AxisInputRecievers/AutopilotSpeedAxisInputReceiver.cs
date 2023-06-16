@@ -11,44 +11,49 @@ public class AutopilotSpeedAxisInputReceiver : AxisInputReceiver
     TextMeshProUGUI c2;
     TextMeshProUGUI c3;
     // Text c4;
-    float lastPercent;
+    int currentValue = 320;
 
     public override void OnStart() {
-        Debug.Log("AutopilotSpeedAxisInputReceiver.OnStart");
-
         c1 = this.transform.Find("C1").GetComponent<TextMeshProUGUI>();
         c2 = this.transform.Find("C2").GetComponent<TextMeshProUGUI>();
         c3 = this.transform.Find("C3").GetComponent<TextMeshProUGUI>();
         // c4 = this.transform.Find("C4").GetComponent<Text>();
+    }
 
-        if (lastPercent != null) {
-            OnPercent(lastPercent);
+    public override void OnValueChange(int valueChange) {
+        var rawNewValue = currentValue + valueChange;
+        var newValue = 0;
+
+        if (rawNewValue < 0) {
+            newValue = 0;
+        } else if (rawNewValue > 400) {
+            newValue = 400;
+        } else {
+            newValue = rawNewValue;
         }
+
+        Debug.Log("OnValueChange  " + valueChange + "  current " + currentValue + "  new " + rawNewValue + " => " + newValue);
+
+        currentValue = newValue;
+
+        UpdateSpeedWithValue(currentValue);
     }
 
-    public override void OnPercent(float percentOutOf100) {
-        lastPercent = percentOutOf100;
-        UpdateSpeedWithPercent(percentOutOf100);
-    }
-
-    void UpdateSpeedWithPercent(float percentOutOf100) {
+    void UpdateSpeedWithValue(int newValue) {
         if (c1 == null) {
             return;
         }
 
-        var newSpeed = 400 * (percentOutOf100 / 100);
-        var newSpeedString = newSpeed.ToString("0");
+        var valueString = newValue.ToString();
 
-        if (newSpeedString.Length == 1) {
-            newSpeedString = "00" + newSpeedString;
-        } else if (newSpeedString.Length == 2) {
-            newSpeedString = "0" + newSpeedString;
+        if (valueString.Length == 1) {
+            valueString = "00" + valueString;
+        } else if (valueString.Length == 2) {
+            valueString = "0" + valueString;
         }
 
-        c1.text = newSpeedString[0].ToString();
-        c2.text = newSpeedString[1].ToString();
-        c3.text = newSpeedString[2].ToString();
-
-        Debug.Log("AutopilotSpeedAxisInputReceiver.UpdateSpeedWithPercent %" + percentOutOf100 + " => " + newSpeedString);
+        c1.text = valueString[0].ToString();
+        c2.text = valueString[1].ToString();
+        c3.text = valueString[2].ToString();
     }
 }

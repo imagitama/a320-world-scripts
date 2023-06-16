@@ -22,4 +22,8 @@ public class AxisInputReceiver : UdonSharpBehaviour
     public virtual void OnIndex(int index) {
 
     }
+
+    public virtual void OnValueChange(int valueChange) {
+
+    }
 }

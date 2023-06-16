@@ -195,7 +195,7 @@ public class PushButton : UdonSharpBehaviour
     }
 
     public void UpdateRenderers() {
-        Debug.Log("PushButton \"" + this.gameObject.name + "\" updating renderers with  1=" + (isSeqOneOn ? "ON" : "OFF") + "  2=" + (isSeqTwoOn ? "ON" : "OFF") + "");
+        // Debug.Log("PushButton \"" + this.gameObject.name + "\" updating renderers with  1=" + (isSeqOneOn ? "ON" : "OFF") + "  2=" + (isSeqTwoOn ? "ON" : "OFF") + "");
         UpdateSeqOneRenderer();
         UpdateSeqTwoRenderer();
     }

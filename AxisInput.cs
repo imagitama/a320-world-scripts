@@ -56,6 +56,10 @@ public class AxisInput : UdonSharpBehaviour
     [UdonSynced]
     int syncedSelectedIndex;
 
+    int valueChange = 0;
+    [UdonSynced]
+    int syncedValueChange;
+
     public float defaultRotation;
     public float defaultRotationOffset = 90f;
     public float[] targetAngles;
@@ -84,6 +88,7 @@ public class AxisInput : UdonSharpBehaviour
     Quaternion lastKnownPickupRotation;
     float lastKnownPercent;
     bool isOwner;
+    float pickupDiff = 0;
 
     // debug
     Transform fakeHand;
@@ -104,6 +109,8 @@ public class AxisInput : UdonSharpBehaviour
 
         if (GetIsOwner()) {
             InitializePickupTransform();
+
+            pickupMovementOnAxis = GetPickupMovementOnAxis();
 
             if (GetNeedsSnapping()) {
                 rotatorMovementOnAxis = GetSnappedRotatorRotationOnAxis();
@@ -135,14 +142,14 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     void CustomUpdate() {
-        if (GetIsOwner()) {
+        if (GetIsOwner() && isPickingUp) {
             MovePickupToHand();
 
-            if (isPickingUp) {
-                rotatorMovementOnAxis = GetRotatorRotationOnAxis();
-            }
+            rotatorMovementOnAxis = GetRotatorRotationOnAxis();
 
-            pickupMovementOnAxis = (inputMethod == AxisInputMethods.Slide ? this.transform.position[(int)pickupAxis] : this.transform.rotation[(int)pickupAxis]);
+            var oldPickupMovementOnAxis = pickupMovementOnAxis;
+
+            pickupMovementOnAxis = GetPickupMovementOnAxis();
             
             var hasChanged = (pickupMovementOnAxis != syncedPickupMovementOnAxis || rotatorMovementOnAxis != syncedRotatorMovementOnAxis);
             
@@ -150,11 +157,12 @@ public class AxisInput : UdonSharpBehaviour
             syncedPickupMovementOnAxis = pickupMovementOnAxis;
 
             if (hasChanged) {
+                Debug.Log("CustomUpdate  hasChanged  " + oldPickupMovementOnAxis + " => " + pickupMovementOnAxis);
+
+                CalculateValueChangeAndNotify(oldPickupMovementOnAxis);
                 HandlePercentages();
                 SyncVarsToOtherPlayers();
             }
-        } else {
-            UpdatePickupTransform();
         }
         
         MoveRotatorVisibly();
@@ -305,15 +313,24 @@ public class AxisInput : UdonSharpBehaviour
 
     public override void OnDeserialization() {
         rotatorMovementOnAxis = syncedRotatorMovementOnAxis;
-        pickupMovementOnAxis = syncedPickupMovementOnAxis;
 
-        HandlePercentages();
+        if (syncedPickupMovementOnAxis != pickupMovementOnAxis) {
+            UpdatePickupTransform();
+            HandlePercentages();
+        }
+
+        pickupMovementOnAxis = syncedPickupMovementOnAxis;
 
         if (syncedSelectedIndex != selectedIndex) {
             NotifyReceiversOfIndex(selectedIndex);
         }
 
         selectedIndex = syncedSelectedIndex;
+
+        if (syncedValueChange != valueChange) {
+            NotifyReceiversOfValueChange(valueChange);
+            valueChange = 0;
+        }
     }
 
     public override void InputGrab(bool value, VRC.Udon.Common.UdonInputEventArgs args) {
@@ -334,6 +351,34 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     //////////////
+
+    void CalculateValueChangeAndNotify(float oldPickupMovementOnAxis) {
+        if (oldPickupMovementOnAxis == pickupMovementOnAxis || fromAngle != -1 || toAngle != -1 || targetAngles.Length != 0) {
+            return;
+        }
+
+        // TODO: Do not hardcode the -90f (only for knobs)
+        var currentValueAsDegrees = NormalizeDegreesTo0to360(oldPickupMovementOnAxis - 90f);
+        var newValueAsDegrees = NormalizeDegreesTo0to360(pickupMovementOnAxis - 90f);
+        var degreesChange = Mathf.DeltaAngle(currentValueAsDegrees, newValueAsDegrees);
+
+        Debug.Log("CustomUpdate   was " + currentValueAsDegrees + "d   now " + newValueAsDegrees + "d   diff " + degreesChange + "d");
+
+        var newValueChange = Mathf.RoundToInt(degreesChange);
+
+        if (newValueChange != valueChange) {
+            valueChange = newValueChange;
+            NotifyReceiversOfValueChange(valueChange);
+        }
+    }
+
+    float RoundFloatForDegrees(float number) {
+        return (float)Mathf.RoundToInt(number);
+    }
+
+    float GetPickupMovementOnAxis() {
+        return RoundFloatForDegrees(inputMethod == AxisInputMethods.Slide ? this.transform.position[(int)pickupAxis] : this.transform.rotation.eulerAngles[(int)pickupAxis]);
+    }
 
     void SyncVarsToOtherPlayers() {
         if (!GetIsOwner()) {
@@ -395,7 +440,9 @@ public class AxisInput : UdonSharpBehaviour
                 pickupAxis == Axis.Z ? rotationToUse : initialPickupRotation.eulerAngles.z
             );
 
-            Debug.Log("InitializePickupTransform " + rotationToUse + "d => " + lastKnownPickupRotation.eulerAngles);
+            if (GetDisplayName() == "KNOB_AUTOPILOT_L2.004") {
+                Debug.Log("InitializePickupTransform " + rotationToUse + "d => " + lastKnownPickupRotation.eulerAngles);
+            }
 
             this.transform.rotation = lastKnownPickupRotation;
         }
@@ -419,6 +466,7 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     void UpdatePickupTransform() {
+        // TODO: Do not constantly call this and instead only do it if changed
         if (inputMethod == AxisInputMethods.Slide) {
             this.transform.position = new Vector3(
                 pickupAxis == Axis.X ? pickupMovementOnAxis : initialPickupPosition.x,
@@ -453,6 +501,10 @@ public class AxisInput : UdonSharpBehaviour
         return targetAngles.Length >= 2;
     }
 
+    float GetEulerAngleFromHandRotationValue(float handRotationValue) {
+        return (((handRotationValue * (invertTwist ? -1 : 1)) - 90f + pickupDiff) * -1);
+    }
+
     void MovePickupToHand() {
         if (isPickingUp) {
             if (inputMethod == AxisInputMethods.Slide) {
@@ -467,9 +519,9 @@ public class AxisInput : UdonSharpBehaviour
                 var handRotation = GetHandRotation();
 
                 lastKnownPickupRotation = Quaternion.Euler(
-                    pickupAxis == Axis.X ? (((handRotation.eulerAngles.x * (invertTwist ? -1 : 1)) - 90f) * -1) : initialPickupRotation.eulerAngles.x,
-                    pickupAxis == Axis.Y ? (((handRotation.eulerAngles.y * (invertTwist ? -1 : 1)) - 90f) * -1) : initialPickupRotation.eulerAngles.y,
-                    pickupAxis == Axis.Z ? (((handRotation.eulerAngles.z * (invertTwist ? -1 : 1)) - 90f) * -1) : initialPickupRotation.eulerAngles.z
+                    pickupAxis == Axis.X ? GetEulerAngleFromHandRotationValue(handRotation.eulerAngles.x) : initialPickupRotation.eulerAngles.x,
+                    pickupAxis == Axis.Y ? GetEulerAngleFromHandRotationValue(handRotation.eulerAngles.y) : initialPickupRotation.eulerAngles.y,
+                    pickupAxis == Axis.Z ? GetEulerAngleFromHandRotationValue(handRotation.eulerAngles.z) : initialPickupRotation.eulerAngles.z
                 );
             }
         }
@@ -481,7 +533,7 @@ public class AxisInput : UdonSharpBehaviour
             }
         } else {
             if (this.transform.rotation != lastKnownPickupRotation) {
-                Debug.Log("MovePickupToHand rotation " + this.transform.rotation.eulerAngles + " is NOT the same, updating to " + lastKnownPickupRotation.eulerAngles);
+                // Debug.Log("MovePickupToHand rotation " + this.transform.rotation.eulerAngles + " is NOT the same, updating to " + lastKnownPickupRotation.eulerAngles);
                 this.transform.rotation = lastKnownPickupRotation;
             }
         }
@@ -640,9 +692,25 @@ public class AxisInput : UdonSharpBehaviour
 
         isPickingUp = true;
 
+        pickupDiff = 0;
+        pickupDiff = GetPickupDiff();
+
         BecomeOwner();
 
         UnhighlightObject();
+    }
+
+    float GetPickupDiff() {
+        var handRotation = GetHandRotation();
+        var handRotationAngle = GetEulerAngleFromHandRotationValue(handRotation.eulerAngles[(int)pickupAxis]);
+ 
+        var lastKnownRotationOnAxis = lastKnownPickupRotation.eulerAngles[(int)pickupAxis];
+
+        float newDiff = RoundFloatForDegrees(handRotationAngle > lastKnownRotationOnAxis ? lastKnownRotationOnAxis - handRotationAngle : handRotationAngle - lastKnownRotationOnAxis);
+
+        Debug.Log("GetPickupDiff  it was " + lastKnownRotationOnAxis + " now it is " + handRotationAngle + " ... diff is " + newDiff);
+
+        return newDiff;
     }
 
     void OnCustomDrop() {
@@ -655,7 +723,6 @@ public class AxisInput : UdonSharpBehaviour
             rotatorMovementOnAxis = GetSnappedRotatorRotationOnAxis();
         } else {
             Debug.Log("Does not need snapping");
-            HandlePercentages();
         }
     }
 
@@ -759,11 +826,11 @@ public class AxisInput : UdonSharpBehaviour
 
             var newRotationOnAxis = ConvertDegreesOutOf360ToRotationValue(nearestAnglePositiveDegrees);
             
-            if (GetDisplayName() == "SWITCH_OVHD_EXTLT_STROBE.004") {
-                Debug.Log("Rotator Snapped  " + currentRotationValue360 + "d -> (between " + firstTargetAngle + "d and " + lastTargetAngle + "d) -> " + clampedDegrees360 + "d -> " + newRotationOnAxis + "d");
-            }
+            // if (GetDisplayName() == "SWITCH_OVHD_EXTLT_STROBE.004") {
+            //     Debug.Log("Rotator Snapped  " + currentRotationValue360 + "d -> (between " + firstTargetAngle + "d and " + lastTargetAngle + "d) -> " + clampedDegrees360 + "d -> " + newRotationOnAxis + "d");
+            // }
 
-            return newRotationOnAxis;
+            return RoundFloatForDegrees(newRotationOnAxis);
         } else {
             var clampedDegrees360 = (fromAngle != -1 && toAngle != -1 ? ClampDegrees(currentRotationValue360, fromAngle, toAngle) : currentRotationValue360);
 
@@ -773,7 +840,7 @@ public class AxisInput : UdonSharpBehaviour
 
             // Debug.Log("Rotator Unsnapped  " + currentRotationValue360 + "d -> (between " + fromAngle + "d and " + toAngle + "d) -> Clamp " + clampedDegrees360 + "d -> Actual " + newRotationOnAxis + "d");
 
-            return newRotationOnAxis;
+            return RoundFloatForDegrees(newRotationOnAxis);
         }
     }
 
@@ -949,6 +1016,16 @@ public class AxisInput : UdonSharpBehaviour
 
         foreach (var receiver in receivers) {
             receiver.OnPercent(newPercent);
+        }
+    }
+
+    void NotifyReceiversOfValueChange(int valueChange) {
+        if (receivers == null) {
+            return;
+        }
+
+        foreach (var receiver in receivers) {
+            receiver.OnValueChange(valueChange);
         }
     }
 
