@@ -157,8 +157,6 @@ public class AxisInput : UdonSharpBehaviour
             syncedPickupMovementOnAxis = pickupMovementOnAxis;
 
             if (hasChanged) {
-                Debug.Log("CustomUpdate  hasChanged  " + oldPickupMovementOnAxis + " => " + pickupMovementOnAxis);
-
                 CalculateValueChangeAndNotify(oldPickupMovementOnAxis);
                 HandlePercentages();
                 SyncVarsToOtherPlayers();
@@ -200,7 +198,7 @@ public class AxisInput : UdonSharpBehaviour
             float y = 0;
             float z = 0;
 
-            var axisToUse = inputMethod == AxisInputMethods.Slide ? rotatorAxis : pickupAxis;
+            var axisToUse = rotatorAxis;
 
             switch (axisToUse) {
                 case Axis.X:
@@ -244,8 +242,8 @@ public class AxisInput : UdonSharpBehaviour
         var offsetToAddToAllAngles = (inputMethod == AxisInputMethods.Twist ? -90f : 0) + visualOffset;
 
         var colorsByAngle = new System.Collections.Generic.Dictionary<Color, float>();
-        colorsByAngle.Add(Color.white, 0f + offsetToAddToAllAngles);
-        colorsByAngle.Add(new Color(1, 0, 1, 1), defaultRotation);
+        colorsByAngle.Add(Color.white, 1f + offsetToAddToAllAngles);
+        colorsByAngle.Add(new Color(1, 0, 1, 1), defaultRotation + offsetToAddToAllAngles + 2f);
 
         if (fromAngle != -1) {
             colorsByAngle.Add(Color.yellow, (fromAngle + offsetToAddToAllAngles));
@@ -255,11 +253,11 @@ public class AxisInput : UdonSharpBehaviour
         }
 
         for (var i = 0; i < targetAngles.Length; i++) {
-            var targetAngle = targetAngles[i] + offsetToAddToAllAngles + snappingOffset;
+            var targetAngle = (targetAngles[i] + offsetToAddToAllAngles) * (invertRotator ? -1 : 1);
             colorsByAngle.Add(new Color(1, 0.2f + ((float)i / 10), 0.5f), targetAngle);
         }
 
-        colorsByAngle.Add(Color.green, rotatorMovementOnAxis);
+        colorsByAngle.Add(Color.green, rotatorMovementOnAxis + offsetToAddToAllAngles + 3f);
 
         foreach (System.Collections.Generic.KeyValuePair<Color, float> entry in colorsByAngle) {
             Vector3 endPoint = GetLineEndPoint(startPoint, entry.Value, radius);
@@ -276,7 +274,7 @@ public class AxisInput : UdonSharpBehaviour
         float y = 0;
         float z = 0;
 
-        var axisToUse = inputMethod == AxisInputMethods.Slide ? rotatorAxis : pickupAxis;
+        var axisToUse = rotatorAxis;
 
         switch (axisToUse) {
             case Axis.X:
@@ -373,6 +371,7 @@ public class AxisInput : UdonSharpBehaviour
     }
 
     float RoundFloatForDegrees(float number) {
+        // return number;
         return (float)Mathf.RoundToInt(number);
     }
 
@@ -501,8 +500,8 @@ public class AxisInput : UdonSharpBehaviour
         return targetAngles.Length >= 2;
     }
 
-    float GetEulerAngleFromHandRotationValue(float handRotationValue) {
-        return (((handRotationValue * (invertTwist ? -1 : 1)) - 90f + pickupDiff) * -1);
+    float GetEulerAngleFromHandRotationValue(float handRotationValue, bool includePickupDiff = true) {
+        return ((((handRotationValue * (invertTwist ? -1 : 1)) - 90f) + (includePickupDiff ? pickupDiff : 0)) * -1);
     }
 
     void MovePickupToHand() {
@@ -692,8 +691,9 @@ public class AxisInput : UdonSharpBehaviour
 
         isPickingUp = true;
 
-        pickupDiff = 0;
-        pickupDiff = GetPickupDiff();
+        // TODO: Get this working
+        // TODO: Apply to sliding inputs too when ready
+        // pickupDiff = GetPickupDiff();
 
         BecomeOwner();
 
@@ -702,13 +702,15 @@ public class AxisInput : UdonSharpBehaviour
 
     float GetPickupDiff() {
         var handRotation = GetHandRotation();
-        var handRotationAngle = GetEulerAngleFromHandRotationValue(handRotation.eulerAngles[(int)pickupAxis]);
+
+        var handRotationWithOffset = handRotation.eulerAngles[(int)pickupAxis];
+        var handRotationToUse = GetEulerAngleFromHandRotationValue(handRotationWithOffset, false);
  
         var lastKnownRotationOnAxis = lastKnownPickupRotation.eulerAngles[(int)pickupAxis];
 
-        float newDiff = RoundFloatForDegrees(handRotationAngle > lastKnownRotationOnAxis ? lastKnownRotationOnAxis - handRotationAngle : handRotationAngle - lastKnownRotationOnAxis);
+        float newDiff = Mathf.DeltaAngle(handRotationToUse, lastKnownRotationOnAxis);
 
-        Debug.Log("GetPickupDiff  it was " + lastKnownRotationOnAxis + " now it is " + handRotationAngle + " ... diff is " + newDiff);
+        Debug.Log("GetPickupDiff  hand " + handRotationWithOffset + "d   VS   last " + lastKnownRotationOnAxis + "d   DIFF   " + newDiff + "d");
 
         return newDiff;
     }

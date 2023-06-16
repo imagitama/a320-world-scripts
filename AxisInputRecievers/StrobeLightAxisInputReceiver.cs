@@ -34,6 +34,7 @@ public class StrobeLightAxisInputReceiver : AxisInputReceiver
         if (lightLeft == null || lightRight == null || lightTail == null) {
             return;
         }
+        Debug.Log("StrobeLightAxisInputReceiver.ChangeLights " + (isEnabled ? "Enabled" : "Disabled"));
         lightLeft.SetActive(isEnabled);
         lightRight.SetActive(isEnabled);
         lightTail.SetActive(isEnabled);
