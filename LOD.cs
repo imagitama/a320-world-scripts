@@ -13,11 +13,14 @@ public class LOD : UdonSharpBehaviour
 
     void Start()
     {
+#if UNITY_EDITOR
+#else
         if (initiallyShowLowQuality) {
             ShowLowQualityObjects();
         } else {
             ShowHighQualityObjects();
         }
+#endif
     }
 
     void ShowHighQualityObjects() {

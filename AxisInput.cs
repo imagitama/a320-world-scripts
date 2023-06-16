@@ -65,6 +65,7 @@ public class AxisInput : UdonSharpBehaviour
     public float visualOffset = 0f;
     public float snappingOffset = 0f;
     public bool invertTwist = false; // for ceiling knob
+    public bool invertRotator = true; // for ND knob TODO: Find a way to make this generic/remove it
     public Material highlightMaterial;
 
     Vector3 initialPickupPosition;
@@ -232,19 +233,21 @@ public class AxisInput : UdonSharpBehaviour
         var radius = inputMethod == AxisInputMethods.Slide ? Vector3.Distance(this.transform.parent.position, this.transform.position) : 0.02f;
         Vector3 startPoint = this.transform.parent.position;
 
+        var offsetToAddToAllAngles = (inputMethod == AxisInputMethods.Twist ? -90f : 0) + visualOffset;
+
         var colorsByAngle = new System.Collections.Generic.Dictionary<Color, float>();
-        colorsByAngle.Add(Color.white, 0f);
+        colorsByAngle.Add(Color.white, 0f + offsetToAddToAllAngles);
         colorsByAngle.Add(new Color(1, 0, 1, 1), defaultRotation);
 
         if (fromAngle != -1) {
-            colorsByAngle.Add(Color.yellow, (fromAngle + (inputMethod == AxisInputMethods.Twist ? -90f : 0)));
+            colorsByAngle.Add(Color.yellow, (fromAngle + offsetToAddToAllAngles));
         }
         if (toAngle != -1) {
-            colorsByAngle.Add(Color.red, (toAngle + (inputMethod == AxisInputMethods.Twist ? -90f : 0)));
+            colorsByAngle.Add(Color.red, (toAngle + offsetToAddToAllAngles));
         }
 
         for (var i = 0; i < targetAngles.Length; i++) {
-            var targetAngle = targetAngles[i] + snappingOffset;
+            var targetAngle = targetAngles[i] + offsetToAddToAllAngles + snappingOffset;
             colorsByAngle.Add(new Color(1, 0.2f + ((float)i / 10), 0.5f), targetAngle);
         }
 
@@ -392,6 +395,8 @@ public class AxisInput : UdonSharpBehaviour
                 pickupAxis == Axis.Z ? rotationToUse : initialPickupRotation.eulerAngles.z
             );
 
+            Debug.Log("InitializePickupTransform " + rotationToUse + "d => " + lastKnownPickupRotation.eulerAngles);
+
             this.transform.rotation = lastKnownPickupRotation;
         }
     }
@@ -476,6 +481,7 @@ public class AxisInput : UdonSharpBehaviour
             }
         } else {
             if (this.transform.rotation != lastKnownPickupRotation) {
+                Debug.Log("MovePickupToHand rotation " + this.transform.rotation.eulerAngles + " is NOT the same, updating to " + lastKnownPickupRotation.eulerAngles);
                 this.transform.rotation = lastKnownPickupRotation;
             }
         }
@@ -706,9 +712,9 @@ public class AxisInput : UdonSharpBehaviour
 
         if (inputMethod == AxisInputMethods.Twist) {
             rotator.rotation = Quaternion.Euler(
-                rotatorAxis == Axis.X ? (rotatorMovementOnAxis * -1) : initialRotatorRotation.eulerAngles.x,
-                rotatorAxis == Axis.Y ? (rotatorMovementOnAxis * -1) : initialRotatorRotation.eulerAngles.y,
-                rotatorAxis == Axis.Z ? (rotatorMovementOnAxis * -1) : initialRotatorRotation.eulerAngles.z
+                rotatorAxis == Axis.X ? (rotatorMovementOnAxis * (invertRotator ? -1 : 1)) : initialRotatorRotation.eulerAngles.x,
+                rotatorAxis == Axis.Y ? (rotatorMovementOnAxis * (invertRotator ? -1 : 1)) : initialRotatorRotation.eulerAngles.y,
+                rotatorAxis == Axis.Z ? (rotatorMovementOnAxis * (invertRotator ? -1 : 1)) : initialRotatorRotation.eulerAngles.z
             );
             return;
         }
